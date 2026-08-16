@@ -14,6 +14,7 @@ const {
   SlashCommandBuilder,
   PermissionFlagsBits,
   MessageFlags,
+  ChannelType,
 } = require('discord.js');
 
 const {
@@ -443,7 +444,10 @@ async function handleRefer(interaction) {
     ? guild.channels.cache.get(REFER_CHANNEL_ID) ||
       (await guild.channels.fetch(REFER_CHANNEL_ID).catch(() => null))
     : guild.systemChannel ||
-      guild.channels.cache.find((c) => c.isTextBased() && c.permissionsFor(guild.members.me).has('CreateInstantInvite'));
+      guild.channels.cache.find((c) =>
+        (c.type === ChannelType.GuildText || c.type === ChannelType.GuildAnnouncement) &&
+        c.permissionsFor(guild.members.me).has('CreateInstantInvite')
+      );
 
   if (!channel || !channel.isSendable()) {
     await interaction.reply({ content: 'Could not find a channel to create the invite in. Check REFER_CHANNEL_ID.', flags: MessageFlags.Ephemeral });
