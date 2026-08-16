@@ -1,0 +1,17 @@
+{
+  "name": "verification-recruitment-bot",
+  "version": "1.0.0",
+  "description": "Discord bot that logs recruiters by invite code and tracks a top-recruiter leaderboard with verification popups",
+  "main": "index.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5",
+    "mongodb": "^6.10.0"
+  }
+}
