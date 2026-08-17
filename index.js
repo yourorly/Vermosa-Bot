@@ -28,6 +28,7 @@ const {
   creditUser,
   markVerified,
   markLeft,
+  lookupServerRecord,
   getLeaderboard,
   recruitStats,
   createReferLink,
@@ -106,7 +107,7 @@ async function handleMemberJoin(member) {
   const oldCache = inviteCache.get(guild.id) || new Map();
 
   const used = await findUsedInvite(guild, oldCache);
-  const inviterId = used ? used.inviterId : null;
+  let inviterId = used ? used.inviterId : null;
 
   let inviterName = null;
   let refCode = null;
@@ -114,9 +115,13 @@ async function handleMemberJoin(member) {
 
   if (inviterId) {
     const inviterUser = await client.users.fetch(inviterId).catch(() => null);
-    inviterName = inviterUser ? inviterUser.username : String(inviterId);
-    const inviterDoc = await getUser(inviterId);
-    refCode = inviterDoc ? inviterDoc.referralCode : null;
+    if (inviterUser && inviterUser.bot) {
+      inviterId = null;
+    } else {
+      inviterName = inviterUser ? inviterUser.username : String(inviterId);
+      const inviterDoc = await getUser(inviterId);
+      refCode = inviterDoc ? inviterDoc.referralCode : null;
+    }
   }
   if (used) {
     viaReferLink = await findReferLink(used.code);
@@ -219,23 +224,15 @@ async function openVerificationModal(interaction) {
 
   const referralInput = new TextInputBuilder()
     .setCustomId('referral_code')
-    .setLabel('Referral code (optional)')
+    .setLabel('Referral code')
     .setStyle(TextInputStyle.Short)
     .setPlaceholder('e.g. VMS-XXXXXX')
-    .setRequired(false)
+    .setRequired(true)
     .setMaxLength(16);
-
-  const agreeInput = new TextInputBuilder()
-    .setCustomId('agree')
-    .setLabel('Type "I agree" to accept the server rules')
-    .setStyle(TextInputStyle.Short)
-    .setPlaceholder('I agree')
-    .setMaxLength(32);
 
   modal.addComponents(
     new ActionRowBuilder().addComponents(robloxInput),
-    new ActionRowBuilder().addComponents(referralInput),
-    new ActionRowBuilder().addComponents(agreeInput)
+    new ActionRowBuilder().addComponents(referralInput)
   );
 
   await interaction.showModal(modal);
@@ -243,21 +240,39 @@ async function openVerificationModal(interaction) {
 
 async function handleVerificationSubmit(interaction) {
   const roblox = interaction.fields.getTextInputValue('roblox').trim();
-  const agree = interaction.fields.getTextInputValue('agree').trim().toLowerCase();
   const referralRaw = interaction.fields.getTextInputValue('referral_code').trim();
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
 
-  if (agree !== 'yes' && agree !== 'agree' && agree !== 'i agree') {
+  if (!roblox) {
     await interaction.followUp({
-      content: 'You must type "I agree" to accept the rules to be verified.',
+      content: 'Please enter your Roblox username.',
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
-  if (!roblox) {
+  if (!referralRaw) {
     await interaction.followUp({
-      content: 'Please enter your Roblox username.',
+      content: 'Please enter a referral code.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const referral = await applyReferralCode(interaction.user.id, referralRaw);
+  if (!referral.ok) {
+    let reason;
+    if (referral.reason === 'not_found') {
+      reason = `Could not find a user with referral code **${referralRaw.toUpperCase()}**.`;
+    } else if (referral.reason === 'self') {
+      reason = 'You cannot use your own referral code.';
+    } else if (referral.reason === 'already_recruited') {
+      reason = 'You have already been credited by another referrer.';
+    } else {
+      reason = 'Invalid referral code.';
+    }
+    await interaction.followUp({
+      content: reason,
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -278,15 +293,13 @@ async function handleVerificationSubmit(interaction) {
 
   await markVerified(interaction.user.id, roblox);
 
-  const referral = await applyReferralCode(interaction.user.id, referralRaw);
-
   const logChannel = await getLogChannel(interaction.guild);
   if (logChannel && logChannel.isSendable()) {
     const desc = [
       `**${interaction.user.tag}** (<@${interaction.user.id}>) verified.`,
       `Roblox username: **${roblox}**`,
       `Discord ID: \`${interaction.user.id}\``,
-      referral.ok ? `Referred via code **${referralRaw.toUpperCase()}** from <@${referral.owner.userId}> (${referral.owner.username})` : null,
+      `Referred via code **${referralRaw.toUpperCase()}** from <@${referral.owner.userId}> (${referral.owner.username})`,
     ].filter(Boolean).join('\n');
     logChannel.send({
       embeds: [
@@ -302,14 +315,8 @@ async function handleVerificationSubmit(interaction) {
   const confirmDesc = [
     `Welcome, **${roblox}**!`,
     `You have been verified and granted access.`,
+    `Referred by <@${referral.owner.userId}> (${referral.owner.username}).`,
   ];
-  if (referral.ok) {
-    confirmDesc.push(`Referred by <@${referral.owner.userId}> (${referral.owner.username}).`);
-  } else if (referralRaw && referral.reason === 'not_found') {
-    confirmDesc.push(`Could not find a user with referral code **${referralRaw.toUpperCase()}**.`);
-  } else if (referralRaw && referral.reason === 'self') {
-    confirmDesc.push('You cannot use your own referral code.');
-  }
 
   if (added.length) {
     await interaction.followUp({
@@ -561,6 +568,64 @@ async function handleCreditUser(interaction) {
   });
 }
 
+const SERVERCHECK_GUILD_ID = '1529774509555453962';
+
+async function handleServerCheck(interaction) {
+  const target = interaction.options.getUser('user') || interaction.user;
+  await interaction.deferReply();
+
+  try {
+    const doc = await lookupServerRecord(target.id, SERVERCHECK_GUILD_ID);
+    if (!doc) {
+      await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('Server Check')
+            .setColor(0xe74c3c)
+            .setDescription(`<@${target.id}> has **no record** in the target server.`)
+            .setTimestamp(),
+        ],
+      });
+      return;
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle('Server Check')
+      .setColor(0x2ecc71)
+      .setDescription(`<@${target.id}> **has a record** in the target server.`)
+      .addFields(
+        { name: 'Level', value: String(doc.level ?? 0), inline: true },
+        { name: 'Total XP', value: String(doc.totalXp ?? 0), inline: true },
+        { name: 'Voice XP', value: String(doc.voiceXp ?? 0), inline: true },
+        { name: 'Voice Time', value: formatDuration(doc.voiceSeconds ?? 0), inline: true },
+        { name: 'Messages', value: String(doc.messageCount ?? 0), inline: true },
+      )
+      .setTimestamp();
+
+    if (doc.aboutMe) embed.addFields({ name: 'About Me', value: doc.aboutMe });
+    if (doc.achievements?.length) {
+      embed.addFields({
+        name: 'Achievements',
+        value: doc.achievements.map((a) => a.title).join(', '),
+      });
+    }
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (err) {
+    console.error('ServerCheck error:', err);
+    await interaction.editReply({ content: 'Failed to look up server record.' });
+  }
+}
+
+function formatDuration(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
 client.once(Events.ClientReady, async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
@@ -590,6 +655,10 @@ client.once(Events.ClientReady, async () => {
       .setDescription('Manually credit a referrer for an invited user (admin only)')
       .addUserOption((o) => o.setName('referer').setDescription('The referrer').setRequired(true))
       .addUserOption((o) => o.setName('user').setDescription('The invited user').setRequired(true)),
+    new SlashCommandBuilder()
+      .setName('servercheck')
+      .setDescription('Check if a user has a record in the target server')
+      .addUserOption((o) => o.setName('user').setDescription('User to check (default: you)')),
   ];
 
   if (GUILD_ID) {
@@ -628,6 +697,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction.commandName === 'referral') return handleReferral(interaction);
       if (interaction.commandName === 'refer') return handleRefer(interaction);
       if (interaction.commandName === 'credituser') return handleCreditUser(interaction);
+      if (interaction.commandName === 'servercheck') return handleServerCheck(interaction);
     }
 
     if (interaction.isButton() && interaction.customId === 'verify_open') {

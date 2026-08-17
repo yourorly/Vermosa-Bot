@@ -241,6 +241,35 @@ async function deleteReferLinksByOwner(ownerId) {
   return db.collection('referlinks').deleteMany({ ownerId });
 }
 
+let externalDb = null;
+
+async function getExternalDb() {
+  if (externalDb) return externalDb;
+  const extClient = new MongoClient(process.env.SERVERCHECK_MONGODB_URI);
+  try {
+    await extClient.connect();
+  } catch (err) {
+    if (String(err.message).includes('querySrv')) {
+      await extClient.close().catch(() => {});
+      dns.setServers(['8.8.8.8', '1.1.1.1']);
+      const retry = new MongoClient(process.env.SERVERCHECK_MONGODB_URI);
+      await retry.connect();
+      externalDb = retry.db(process.env.SERVERCHECK_MONGODB_DB || 'test');
+    } else {
+      throw err;
+    }
+  }
+  if (!externalDb) externalDb = extClient.db(process.env.SERVERCHECK_MONGODB_DB || 'test');
+  return externalDb;
+}
+
+async function lookupServerRecord(userId, guildId) {
+  const db = await getExternalDb();
+  const col = db.collection('memberdatas');
+  const doc = await col.findOne({ userId, guildId });
+  return doc;
+}
+
 module.exports = {
   connect,
   getDb,
@@ -258,4 +287,5 @@ module.exports = {
   markReferLinkUsed,
   getReferLinksByOwner,
   deleteReferLinksByOwner,
+  lookupServerRecord,
 };
