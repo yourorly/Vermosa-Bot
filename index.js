@@ -1,5 +1,7 @@
 require('dotenv').config();
 
+const http = require('http');
+
 const {
   Client,
   GatewayIntentBits,
@@ -643,7 +645,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 process.on('unhandledRejection', (err) => console.error('Unhandled rejection:', err));
 
+function startServer() {
+  const port = process.env.PORT || 3000;
+  http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('OK');
+  }).listen(port, () => {
+    console.log(`Listening on port ${port}`);
+  });
+}
+
 async function main() {
+  startServer();
   await connect();
   client.login(TOKEN);
 }
