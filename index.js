@@ -584,6 +584,7 @@ client.once(Events.ClientReady, async () => {
   ];
 
   if (GUILD_ID) {
+    await client.application.commands.set([]);
     const guild = client.guilds.cache.get(GUILD_ID) || (await client.guilds.fetch(GUILD_ID));
     await guild.commands.set(commands);
     console.log(`Registered ${commands.length} commands in guild ${guild.name}`);
