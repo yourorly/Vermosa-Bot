@@ -120,8 +120,17 @@ async function handleMemberJoin(member) {
   }
   if (used) {
     viaReferLink = await findReferLink(used.code);
-    if (viaReferLink && !viaReferLink.used) {
-      await markReferLinkUsed(used.code, member.id);
+    if (viaReferLink) {
+      if (!viaReferLink.used) {
+        await markReferLinkUsed(used.code, member.id);
+      }
+      if (viaReferLink.ownerId) {
+        inviterId = viaReferLink.ownerId;
+        const realInviter = await client.users.fetch(inviterId).catch(() => null);
+        inviterName = realInviter ? realInviter.username : String(inviterId);
+        const realInviterDoc = await getUser(inviterId);
+        refCode = realInviterDoc ? realInviterDoc.referralCode : null;
+      }
     }
   }
 
