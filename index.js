@@ -924,59 +924,165 @@ app.get('/verify/:token', async (req, res) => {
   const avatarUrl = user.displayAvatarURL({ size: 128 });
 
   res.send(generatePage('Server Verification', `
-    <div class="container">
-      <h1>Server Verification</h1>
-      <p>Complete the form below to submit your application.</p>
-
-      <div class="info-card">
-        <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px">
-          <img src="${avatarUrl}" class="avatar" alt="avatar">
-          <div>
-            <div style="font-size:18px;font-weight:600">${user.username}</div>
-            <div style="color:#888;font-size:13px">${user.id}</div>
-          </div>
-        </div>
-        <div class="info-row">
-          <span>Account Age</span>
-          <span>${accountAge} days ${ageWarning ? '<span class="warning">⚠️ New account</span>' : '✅'}</span>
-        </div>
-        <div class="info-row">
-          <span>Has Avatar</span>
-          <span>${hasAvatar ? '✅' : '<span class="warning">⚠️ No avatar</span>'}</span>
-        </div>
-        <div class="info-row">
-          <span>Third Leg</span>
-          <span>${inThirdLeg ? '<span class="check">✅ Member</span>' : '<span class="cross">❌ Not a member</span>'}</span>
-        </div>
-        <div class="info-row">
-          <span>Bnf</span>
-          <span>${inBnf ? '<span class="check">✅ Member</span>' : '<span class="cross">❌ Not a member</span>'}</span>
+    <div class="container" style="max-width:500px">
+      <div style="text-align:center;margin-bottom:24px">
+        <div style="font-size:32px;margin-bottom:8px">📋</div>
+        <h1 style="font-size:1.5em">Application</h1>
+        <div style="margin-top:12px;display:flex;gap:6px;justify-content:center" id="progress">
+          <div class="prog-dot active" id="dot0"></div>
+          <div class="prog-dot" id="dot1"></div>
+          <div class="prog-dot" id="dot2"></div>
+          <div class="prog-dot" id="dot3"></div>
         </div>
       </div>
 
-      <form method="POST" action="/verify/submit">
+      <form method="POST" action="/verify/submit" id="appForm">
         <input type="hidden" name="token" value="${token}">
+        <input type="hidden" name="noRoblox" id="noRobloxField" value="false">
 
-        <label>Roblox Username</label>
-        <input type="text" name="roblox" placeholder="Enter your Roblox username" maxlength="32">
-        <button type="button" class="btn btn-no btn-sm" style="margin-bottom:16px" onclick="document.getElementById('noRobloxSection').style.display='block';document.querySelector('[name=roblox]').value='';document.querySelector('[name=roblox]').disabled=true">I don't have a Roblox account</button>
-        <div id="noRobloxSection" style="display:none;margin-bottom:16px;padding:12px;background:#0f3460;border-radius:8px">
-          <p style="margin:0;color:#f39c12">✓ No Roblox account selected</p>
-          <input type="hidden" name="noRoblox" value="true">
+        <div class="step active" id="step0">
+          <div class="step-inner">
+            <h2 style="text-align:center;margin-bottom:4px">Roblox Username</h2>
+            <p style="text-align:center;margin-bottom:20px;font-size:13px">Enter your Roblox username below.</p>
+            <input type="text" name="roblox" id="robloxInput" placeholder="Enter your Roblox username" maxlength="32" style="text-align:center;font-size:16px">
+            <button type="button" class="btn btn-no" style="width:100%;margin-top:8px;font-size:13px" id="noRobloxBtn">I don't have a Roblox account</button>
+            <div id="noRobloxMsg" style="display:none;text-align:center;margin-top:12px;padding:12px;background:#0f3460;border-radius:8px">
+              <span style="color:#f39c12;font-weight:600">✓ No Roblox account</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:16px">
+            <button type="button" class="btn btn-primary" style="flex:1" onclick="nextStep()">Next →</button>
+          </div>
         </div>
 
-        <label>Referral Code (optional)</label>
-        <input type="text" name="referral" placeholder="e.g. VMS-XXXXXX" maxlength="16">
+        <div class="step" id="step1">
+          <div class="step-inner">
+            <h2 style="text-align:center;margin-bottom:4px">Referral Code</h2>
+            <p style="text-align:center;margin-bottom:20px;font-size:13px">Enter the referral code from the person who invited you.</p>
+            <input type="text" name="referral" id="referralInput" placeholder="e.g. VMS-XXXXXX" maxlength="16" required style="text-align:center;font-size:16px">
+          </div>
+          <div style="display:flex;gap:8px;margin-top:16px">
+            <button type="button" class="btn btn-no" style="flex:0.4" onclick="prevStep()">← Back</button>
+            <button type="button" class="btn btn-primary" style="flex:1" onclick="nextStep()">Next →</button>
+          </div>
+        </div>
 
-        <label>Why do you want to join this server?</label>
-        <textarea name="whyJoin" placeholder="Tell us why you want to join..." required maxlength="500"></textarea>
+        <div class="step" id="step2">
+          <div class="step-inner">
+            <h2 style="text-align:center;margin-bottom:4px">Why do you want to join?</h2>
+            <p style="text-align:center;margin-bottom:20px;font-size:13px">Tell us why you'd like to be part of this community.</p>
+            <textarea name="whyJoin" id="whyJoinInput" placeholder="Type your answer here..." required maxlength="500" style="min-height:120px;text-align:center"></textarea>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:16px">
+            <button type="button" class="btn btn-no" style="flex:0.4" onclick="prevStep()">← Back</button>
+            <button type="button" class="btn btn-primary" style="flex:1" onclick="nextStep()">Next →</button>
+          </div>
+        </div>
 
-        <label>How did you find this server?</label>
-        <textarea name="howFound" placeholder="Tell us how you found us..." required maxlength="500"></textarea>
-
-        <button type="submit" class="btn btn-primary" style="width:100%;margin-top:8px">Submit Application</button>
+        <div class="step" id="step3">
+          <div class="step-inner">
+            <h2 style="text-align:center;margin-bottom:4px">How did you find us?</h2>
+            <p style="text-align:center;margin-bottom:20px;font-size:13px">How did you discover this server?</p>
+            <textarea name="howFound" id="howFoundInput" placeholder="Type your answer here..." required maxlength="500" style="min-height:120px;text-align:center"></textarea>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:16px">
+            <button type="button" class="btn btn-no" style="flex:0.4" onclick="prevStep()">← Back</button>
+            <button type="submit" class="btn btn-success" style="flex:1">Submit Application</button>
+          </div>
+        </div>
       </form>
     </div>
+
+    <style>
+      .prog-dot{width:40px;height:4px;border-radius:4px;background:#2a2a4a;transition:all .3s}
+      .prog-dot.active{background:#5865f2}
+      .prog-dot.done{background:#2ecc71}
+      .step{display:none;animation:fadeSlide .4s ease}
+      .step.active{display:block}
+      .step-inner{min-height:180px}
+      @keyframes fadeSlide{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:translateX(0)}}
+    </style>
+
+    <script>
+      var current = 0;
+      var total = 4;
+      var noRoblox = false;
+
+      document.getElementById('noRobloxBtn').addEventListener('click', function() {
+        noRoblox = !noRoblox;
+        var inp = document.getElementById('robloxInput');
+        var msg = document.getElementById('noRobloxMsg');
+        var field = document.getElementById('noRobloxField');
+        if (noRoblox) {
+          inp.value = '';
+          inp.disabled = true;
+          inp.style.opacity = '0.3';
+          msg.style.display = 'block';
+          field.value = 'true';
+          this.textContent = 'Have a Roblox account';
+          this.className = 'btn btn-primary';
+        } else {
+          inp.disabled = false;
+          inp.style.opacity = '1';
+          msg.style.display = 'none';
+          field.value = 'false';
+          this.textContent = "I don't have a Roblox account";
+          this.className = 'btn btn-no';
+        }
+      });
+
+      function updateDots() {
+        for (var i = 0; i < total; i++) {
+          var d = document.getElementById('dot' + i);
+          d.className = 'prog-dot';
+          if (i < current) d.className = 'prog-dot done';
+          if (i === current) d.className = 'prog-dot active';
+        }
+      }
+
+      function showStep(n) {
+        for (var i = 0; i < total; i++) {
+          document.getElementById('step' + i).className = 'step';
+        }
+        var el = document.getElementById('step' + n);
+        el.className = 'step active';
+        el.style.animation = 'none';
+        el.offsetHeight;
+        el.style.animation = '';
+        updateDots();
+      }
+
+      function nextStep() {
+        var curr = document.getElementById('step' + current);
+        var required = curr.querySelector('[required]');
+        if (required && !required.value.trim()) {
+          required.style.borderColor = '#e74c3c';
+          required.focus();
+          setTimeout(function(){ required.style.borderColor = '#2a2a4a'; }, 1500);
+          return;
+        }
+        if (current === 0 && !noRoblox) {
+          var ri = document.getElementById('robloxInput');
+          if (!ri.value.trim()) {
+            ri.style.borderColor = '#e74c3c';
+            ri.focus();
+            setTimeout(function(){ ri.style.borderColor = '#2a2a4a'; }, 1500);
+            return;
+          }
+        }
+        if (current < total - 1) {
+          current++;
+          showStep(current);
+        }
+      }
+
+      function prevStep() {
+        if (current > 0) {
+          current--;
+          showStep(current);
+        }
+      }
+    </script>
   `));
 });
 
@@ -992,6 +1098,11 @@ app.post('/verify/submit', async (req, res) => {
   const user = await client.users.fetch(doc.userId).catch(() => null);
   if (!user) {
     res.status(400).send(generatePage('Error', '<div class="container"><h1>User Not Found</h1><p>Please try again.</p></div>'));
+    return;
+  }
+
+  if (!referral || !referral.trim()) {
+    res.status(400).send(generatePage('Error', '<div class="container" style="text-align:center"><h1>Referral Code Required</h1><p>You must enter a referral code to continue. Go back and try again.</p></div>'));
     return;
   }
 
@@ -1015,12 +1126,29 @@ app.post('/verify/submit', async (req, res) => {
   }
 
   let referralInfo = null;
-  if (referral && referral.trim()) {
-    const result = await applyReferralCode(doc.userId, referral.trim());
-    if (result.ok) {
-      referralInfo = result.owner;
+  const referralResult = await applyReferralCode(doc.userId, referral.trim());
+  if (!referralResult.ok) {
+    let reason;
+    if (referralResult.reason === 'not_found') {
+      reason = `Referral code **${referral.trim().toUpperCase()}** is not valid.`;
+    } else if (referralResult.reason === 'self') {
+      reason = 'You cannot use your own referral code.';
+    } else if (referralResult.reason === 'already_recruited') {
+      reason = 'You have already been credited by another referrer.';
+    } else {
+      reason = 'Invalid referral code.';
     }
+    res.status(400).send(generatePage('Invalid Referral', `
+      <div class="container" style="text-align:center">
+        <div style="font-size:48px;margin-bottom:16px">❌</div>
+        <h1>Invalid Referral Code</h1>
+        <p>${reason}</p>
+        <p style="color:#888;margin-top:24px;font-size:13px">Go back to Discord and try again with a valid code.</p>
+      </div>
+    `));
+    return;
   }
+  referralInfo = referralResult.owner;
 
   const accountAge = Math.floor((Date.now() - user.createdTimestamp) / (1000 * 60 * 60 * 24));
   const hasAvatar = user.avatar !== null;
