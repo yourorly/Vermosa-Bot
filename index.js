@@ -871,9 +871,35 @@ app.get('/verify/:token', async (req, res) => {
     return;
   }
 
+  let inThirdLeg = false;
+  let inBnf = false;
+
+  if (req.query.checked === 'true') {
+    inThirdLeg = req.query.thirdLeg === 'true';
+    inBnf = req.query.bnf === 'true';
+  }
+
+  const avatarUrl = user.displayAvatarURL({ size: 128 });
   const accountAge = Math.floor((Date.now() - user.createdTimestamp) / (1000 * 60 * 60 * 24));
   const hasAvatar = user.avatar !== null;
   const ageWarning = accountAge < 7;
+
+  if (req.query.checked !== 'true') {
+    const authUrl = `https://discord.com/api/oauth2/authorize?client_id=${DISCORD_CLIENT_ID}&redirect_uri=${encodeURIComponent(WEBSITE_URL + '/verify/servercheck/callback')}&response_type=code&scope=identify+guilds&state=${token}`;
+    res.send(generatePage('Server Verification', `
+      <div class="container" style="text-align:center;max-width:450px">
+        <div style="font-size:48px;margin-bottom:16px">🔐</div>
+        <h1>Verify</h1>
+        <p>Click the button below to authorize with Discord so we can check your server memberships.</p>
+        <a href="${authUrl}" class="btn btn-discord" style="display:inline-block;margin-top:16px;text-decoration:none">
+          <svg style="width:20px;height:20px;vertical-align:middle;margin-right:8px" viewBox="0 0 24 24" fill="white"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
+          Verify
+        </a>
+        <p style="color:#888;margin-top:24px;font-size:12px">This will check if you are a member of Third Leg and Bnf.</p>
+      </div>
+    `));
+    return;
+  }
 
   if (ageWarning || !hasAvatar) {
     res.status(403).send(generatePage('Error 69', `
@@ -908,21 +934,6 @@ app.get('/verify/:token', async (req, res) => {
     return;
   }
 
-  let inThirdLeg = false;
-  let inBnf = false;
-  try {
-    const memberTL = await fetch(`https://discord.com/api/v10/guilds/${THIRD_LEG_ID}/members/${doc.userId}`, {
-      headers: { Authorization: `Bot ${TOKEN}` },
-    });
-    inThirdLeg = memberTL.ok;
-    const memberBNF = await fetch(`https://discord.com/api/v10/guilds/${BNF_ID}/members/${doc.userId}`, {
-      headers: { Authorization: `Bot ${TOKEN}` },
-    });
-    inBnf = memberBNF.ok;
-  } catch {}
-
-  const avatarUrl = user.displayAvatarURL({ size: 128 });
-
   res.send(generatePage('Server Verification', `
     <div class="container" style="max-width:500px">
       <div style="text-align:center;margin-bottom:24px">
@@ -936,9 +947,22 @@ app.get('/verify/:token', async (req, res) => {
         </div>
       </div>
 
+      <div class="info-card" style="margin-bottom:20px">
+        <div class="info-row">
+          <span>Third Leg</span>
+          <span>${inThirdLeg ? '<span class="check">✅ Member</span>' : '<span class="cross">❌ Not a member</span>'}</span>
+        </div>
+        <div class="info-row">
+          <span>Bnf</span>
+          <span>${inBnf ? '<span class="check">✅ Member</span>' : '<span class="cross">❌ Not a member</span>'}</span>
+        </div>
+      </div>
+
       <form method="POST" action="/verify/submit" id="appForm">
         <input type="hidden" name="token" value="${token}">
         <input type="hidden" name="noRoblox" id="noRobloxField" value="false">
+        <input type="hidden" name="inThirdLeg" value="${inThirdLeg}">
+        <input type="hidden" name="inBnf" value="${inBnf}">
 
         <div class="step active" id="step0">
           <div class="step-inner">
@@ -1086,8 +1110,62 @@ app.get('/verify/:token', async (req, res) => {
   `));
 });
 
+app.get('/verify/servercheck/callback', async (req, res) => {
+  const { code, state } = req.query;
+
+  if (!code || !state) {
+    res.status(400).send(generatePage('Error', '<div class="container"><h1>Missing Parameters</h1><p>Please try again from Discord.</p></div>'));
+    return;
+  }
+
+  const tokenDoc = await getVerifyToken(state);
+  if (!tokenDoc || tokenDoc.completed) {
+    res.status(400).send(generatePage('Error', '<div class="container"><h1>Invalid Session</h1><p>Please go back to Discord and get a new link.</p></div>'));
+    return;
+  }
+
+  try {
+    const tokenResp = await fetch('https://discord.com/api/v10/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: `${WEBSITE_URL}/verify/servercheck/callback`,
+        client_id: DISCORD_CLIENT_ID,
+        client_secret: DISCORD_CLIENT_SECRET,
+      }),
+    });
+
+    if (!tokenResp.ok) {
+      res.status(400).send(generatePage('Error', '<div class="container"><h1>OAuth Failed</h1><p>Could not authenticate. Please try again.</p></div>'));
+      return;
+    }
+
+    const tokenData = await tokenResp.json();
+
+    const guildsResp = await fetch('https://discord.com/api/v10/users/@me/guilds', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+
+    let inThirdLeg = false;
+    let inBnf = false;
+
+    if (guildsResp.ok) {
+      const guilds = await guildsResp.json();
+      inThirdLeg = guilds.some(g => g.id === THIRD_LEG_ID);
+      inBnf = guilds.some(g => g.id === BNF_ID);
+    }
+
+    res.redirect(`/verify/${state}?checked=true&thirdLeg=${inThirdLeg}&bnf=${inBnf}`);
+  } catch (err) {
+    console.error('Server check OAuth error:', err);
+    res.status(500).send(generatePage('Error', '<div class="container"><h1>Server Error</h1><p>Something went wrong. Please try again.</p></div>'));
+  }
+});
+
 app.post('/verify/submit', async (req, res) => {
-  const { token, roblox, noRoblox, referral, whyJoin, howFound } = req.body;
+  const { token, roblox, noRoblox, referral, whyJoin, howFound, inThirdLeg, inBnf } = req.body;
 
   const doc = await getVerifyToken(token);
   if (!doc || doc.completed) {
@@ -1153,19 +1231,6 @@ app.post('/verify/submit', async (req, res) => {
   const accountAge = Math.floor((Date.now() - user.createdTimestamp) / (1000 * 60 * 60 * 24));
   const hasAvatar = user.avatar !== null;
 
-  let inThirdLeg = false;
-  let inBnf = false;
-  try {
-    const memberTL = await fetch(`https://discord.com/api/v10/guilds/${THIRD_LEG_ID}/members/${doc.userId}`, {
-      headers: { Authorization: `Bot ${TOKEN}` },
-    });
-    inThirdLeg = memberTL.ok;
-    const memberBNF = await fetch(`https://discord.com/api/v10/guilds/${BNF_ID}/members/${doc.userId}`, {
-      headers: { Authorization: `Bot ${TOKEN}` },
-    });
-    inBnf = memberBNF.ok;
-  } catch {}
-
   await saveApplication(doc.userId, {
     robloxUsername: robloxValid ? robloxData.name : (noRoblox === 'true' ? null : (roblox ? roblox.trim() : null)),
     noRoblox: noRoblox === 'true',
@@ -1176,7 +1241,7 @@ app.post('/verify/submit', async (req, res) => {
     howFound: howFound || null,
     discordCreatedAt: user.createdAt.toISOString(),
     hasAvatar,
-    serverChecks: { ThirdLeg: inThirdLeg, Bnf: inBnf },
+    serverChecks: { ThirdLeg: inThirdLeg === 'true', Bnf: inBnf === 'true' },
   });
 
   await markVerifyTokenUsed(token);
