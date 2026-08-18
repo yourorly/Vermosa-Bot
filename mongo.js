@@ -29,6 +29,8 @@ async function connect() {
   db = client.db(DB_NAME);
   await db.collection('users').createIndex({ referralCode: 1 }, { unique: true, sparse: true });
   await db.collection('referlinks').createIndex({ ownerId: 1 });
+  await db.collection('refcodes').createIndex({ code: 1 }, { unique: true });
+  await db.collection('refcodes').createIndex({ ownerId: 1 });
   console.log(`Connected to MongoDB (${DB_NAME})`);
   return db;
 }
@@ -44,6 +46,69 @@ function generateCode() {
     code += chars[Math.floor(Math.random() * chars.length)];
   }
   return code;
+}
+
+async function generateRefCodes(userId, amount) {
+  const codes = db.collection('refcodes');
+  const generated = [];
+  for (let i = 0; i < amount; i++) {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const code = generateCode();
+      try {
+        await codes.insertOne({ code, ownerId: userId, used: false, usedBy: null, createdAt: new Date() });
+        generated.push(code);
+        break;
+      } catch (e) {
+        if (e.code !== 11000) throw e;
+      }
+    }
+  }
+  return generated;
+}
+
+async function getActiveRefCodes(userId) {
+  return db.collection('refcodes').find({ ownerId: userId, used: false }).toArray();
+}
+
+async function useRefCode(code, usedBy) {
+  const normalized = code.toUpperCase().replace(/\s+/g, '');
+  const candidates = [normalized];
+  if (normalized.startsWith('VMS-')) candidates.push(normalized.slice(4));
+  else candidates.push(`VMS-${normalized}`);
+
+  const codes = db.collection('refcodes');
+  let doc = null;
+  for (const c of candidates) {
+    doc = await codes.findOne({ code: c, used: false });
+    if (doc) break;
+  }
+  if (!doc) return { ok: false, reason: 'not_found' };
+  if (doc.ownerId === usedBy) return { ok: false, reason: 'self' };
+
+  const alreadyUsed = await db.collection('users').findOne({ userId: usedBy, inviterId: { $ne: null } });
+  if (alreadyUsed) return { ok: false, reason: 'already_recruited' };
+
+  await codes.updateOne({ _id: doc._id }, { $set: { used: true, usedBy } });
+  await db.collection('users').updateOne(
+    { userId: usedBy },
+    { $set: { inviterId: doc.ownerId, inviterName: (await db.collection('users').findOne({ userId: doc.ownerId }))?.username || null } }
+  );
+
+  const remaining = await codes.countDocuments({ ownerId: doc.ownerId, used: false });
+  if (remaining === 0) {
+    await generateRefCodes(doc.ownerId, 1);
+  }
+
+  const owner = await db.collection('users').findOne({ userId: doc.ownerId });
+  return { ok: true, owner };
+}
+
+async function refillRefCodes(userId) {
+  const active = await getActiveRefCodes(userId);
+  if (active.length === 0) {
+    return generateRefCodes(userId, 3);
+  }
+  return active.map(c => c.code);
 }
 
 async function assignCode(userId) {
@@ -120,27 +185,7 @@ async function getUser(userId) {
 
 async function applyReferralCode(userId, rawCode) {
   if (!rawCode) return { ok: false, reason: 'none' };
-  const normalized = rawCode.toUpperCase().replace(/\s+/g, '');
-  const candidates = [normalized];
-  if (normalized.startsWith('VMS-')) candidates.push(normalized.slice(4));
-  else candidates.push(`VMS-${normalized}`);
-
-  let owner = null;
-  for (const c of candidates) {
-    owner = await db.collection('users').findOne({ referralCode: c });
-    if (owner) break;
-  }
-  if (!owner) return { ok: false, reason: 'not_found' };
-  if (owner.userId === userId) return { ok: false, reason: 'self' };
-
-  const doc = await db.collection('users').findOne({ userId });
-  if (doc && doc.inviterId) return { ok: false, reason: 'already_recruited' };
-
-  await db.collection('users').updateOne(
-    { userId },
-    { $set: { inviterId: owner.userId, inviterName: owner.username } }
-  );
-  return { ok: true, owner };
+  return useRefCode(rawCode, userId);
 }
 
 async function creditUser(invitedUserId, inviterId, inviterName, inServer) {
@@ -358,4 +403,8 @@ module.exports = {
   getAllApplications,
   approveApplication,
   rejectApplication,
+  generateRefCodes,
+  getActiveRefCodes,
+  useRefCode,
+  refillRefCodes,
 };

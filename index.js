@@ -44,6 +44,10 @@ const {
   getAllApplications,
   approveApplication,
   rejectApplication,
+  generateRefCodes,
+  getActiveRefCodes,
+  useRefCode,
+  refillRefCodes,
 } = require('./mongo');
 
 const TOKEN = process.env.TOKEN;
@@ -325,29 +329,32 @@ async function handleSetup(interaction) {
 }
 
 async function handleReferral(interaction) {
-  const doc = await ensureUser({
+  await ensureUser({
     userId: interaction.user.id,
     username: interaction.user.username,
   });
 
-  let code = doc.referralCode;
-  if (!code) code = await assignCode(interaction.user.id);
+  let active = await getActiveRefCodes(interaction.user.id);
+  if (active.length === 0) {
+    const generated = await generateRefCodes(interaction.user.id, 3);
+    active = generated.map(c => ({ code: c }));
+  }
 
-  const inviterRef = doc.inviterId ? `Referred by: <@${doc.inviterId}>` : 'Referred by: no one yet';
+  const codeList = active.map(c => `\`${c.code}\``).join('\n');
+  const inviterDoc = await getUser(interaction.user.id);
+  const inviterRef = inviterDoc?.inviterId ? `Referred by: <@${inviterDoc.inviterId}>` : 'Referred by: no one yet';
 
   await interaction.reply({
     embeds: [
       new EmbedBuilder()
-        .setTitle('Your Referral ID')
+        .setTitle('Your Referral Codes')
         .setColor(0x9b59b6)
         .setDescription(
-          `Your personal referral code is:\n\n` +
-          `**\`${code}\`**\n\n` +
-          `This code is **permanent** and never changes. ` +
-          `Share it so it gets logged when new members join. ` +
-          `You can also use **/refer** to get a invite link.\n\n${inviterRef}`
+          `Your active referral codes:\n\n${codeList}\n\n` +
+          `These codes are **single-use**. When someone uses one, a new code is automatically generated for you.\n` +
+          `Share them so new members can enter one during verification.\n\n${inviterRef}`
         )
-        .setFooter({ text: interaction.user.username })
+        .setFooter({ text: `${active.length} active code(s)` })
         .setTimestamp(),
     ],
   });
@@ -387,11 +394,18 @@ async function handleRefer(interaction) {
     await createReferLink(interaction.user.id, invite.code);
   }
 
-  const doc = await ensureUser({
+  await ensureUser({
     userId: interaction.user.id,
     username: interaction.user.username,
   });
-  const code = doc.referralCode || (await assignCode(interaction.user.id));
+
+  let active = await getActiveRefCodes(interaction.user.id);
+  if (active.length === 0) {
+    const generated = await generateRefCodes(interaction.user.id, 3);
+    active = generated.map(c => ({ code: c }));
+  }
+
+  const codeList = active.map(c => `\`${c.code}\``).join('\n');
 
   await interaction.reply({
     embeds: [
@@ -402,8 +416,10 @@ async function handleRefer(interaction) {
           `Your server invite link:\n\n${invite.url}\n\n` +
           `This link is **permanent**, has **unlimited uses**, and **never changes**. ` +
           `Share it to recruit members.\n\n` +
-          `Your Referral ID **\`${code}\`** is also permanent and never changes.`
+          `**Your active referral codes:**\n${codeList}\n\n` +
+          `These codes are **single-use**. When someone uses one, a new code is auto-generated.`
         )
+        .setFooter({ text: `${active.length} active code(s)` })
         .setTimestamp(),
     ],
     flags: MessageFlags.Ephemeral,
@@ -462,6 +478,36 @@ async function handleCreditUser(interaction) {
 
   await interaction.reply({
     content: `Credited **${referer.username}** for **${invited.username}**.`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function handleReferCode(interaction) {
+  const amount = interaction.options.getInteger('amount') || 3;
+
+  await ensureUser({
+    userId: interaction.user.id,
+    username: interaction.user.username,
+  });
+
+  const generated = await generateRefCodes(interaction.user.id, amount);
+
+  const codeList = generated.map(c => `\`${c}\``).join('\n');
+
+  await interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setTitle('Referral Codes Generated')
+        .setColor(0x2ecc71)
+        .setDescription(
+          `Generated **${amount}** referral code(s):\n\n${codeList}\n\n` +
+          `These codes are **single-use**. When someone uses one during verification, ` +
+          `a new code is automatically generated for you.\n` +
+          `Share them with people you want to invite!`
+        )
+        .setFooter({ text: interaction.user.username })
+        .setTimestamp(),
+    ],
     flags: MessageFlags.Ephemeral,
   });
 }
@@ -662,6 +708,10 @@ client.once(Events.ClientReady, async () => {
       .setName('refer')
       .setDescription('Generate a one-time server invite link for referrals'),
     new SlashCommandBuilder()
+      .setName('refercode')
+      .setDescription('Generate referral codes to share')
+      .addIntegerOption((o) => o.setName('amount').setDescription('Number of codes to generate (1-10)').setMinValue(1).setMaxValue(10)),
+    new SlashCommandBuilder()
       .setName('credituser')
       .setDescription('Manually credit a referrer for an invited user (admin only)')
       .addUserOption((o) => o.setName('referer').setDescription('The referrer').setRequired(true))
@@ -725,6 +775,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction.commandName === 'invites') return handleInvites(interaction);
       if (interaction.commandName === 'referral') return handleReferral(interaction);
       if (interaction.commandName === 'refer') return handleRefer(interaction);
+      if (interaction.commandName === 'refercode') return handleReferCode(interaction);
       if (interaction.commandName === 'credituser') return handleCreditUser(interaction);
       if (interaction.commandName === 'servercheck') return handleServerCheck(interaction);
       if (interaction.commandName === 'report') return handleReport(interaction);
