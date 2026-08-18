@@ -26,3 +26,9 @@ services:
         sync: false
       - key: ADMIN_USER_ID
         sync: false
+      - key: DISCORD_CLIENT_ID
+        sync: false
+      - key: DISCORD_CLIENT_SECRET
+        sync: false
+      - key: WEBSITE_URL
+        sync: false

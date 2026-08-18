@@ -1,6 +1,9 @@
 require('dotenv').config();
 
+const express = require('express');
+const cookieParser = require('cookie-parser');
 const http = require('http');
+const crypto = require('node:crypto');
 
 const {
   Client,
@@ -10,9 +13,6 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
   SlashCommandBuilder,
   PermissionFlagsBits,
   MessageFlags,
@@ -36,6 +36,14 @@ const {
   markReferLinkUsed,
   getReferLinksByOwner,
   deleteReferLinksByOwner,
+  createVerifyToken,
+  getVerifyToken,
+  markVerifyTokenUsed,
+  saveApplication,
+  getApplication,
+  getAllApplications,
+  approveApplication,
+  rejectApplication,
 } = require('./mongo');
 
 const TOKEN = process.env.TOKEN;
@@ -49,6 +57,12 @@ const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID || null;
 const VERIFY_CHANNEL_ID = process.env.VERIFY_CHANNEL_ID || null;
 const REFER_CHANNEL_ID = process.env.REFER_CHANNEL_ID || null;
 const ADMIN_USER_ID = process.env.ADMIN_USER_ID || null;
+const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || '';
+const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || '';
+const WEBSITE_URL = process.env.WEBSITE_URL || 'http://localhost:3000';
+
+const THIRD_LEG_ID = '1529774509555453962';
+const BNF_ID = '1457082648349507759';
 
 const client = new Client({
   intents: [
@@ -197,7 +211,8 @@ function buildVerifyEmbed() {
     .setColor(0x5865f2)
     .setDescription(
       'Welcome to the server!\n\n' +
-      'Please click the **Verify** button below and complete the popup to gain access.'
+      'Click the **Verify** button below to start the verification process.\n' +
+      'You will be redirected to a website to complete your application.'
     );
 }
 
@@ -210,131 +225,14 @@ function verifyRow() {
   );
 }
 
-async function openVerificationModal(interaction) {
-  const modal = new ModalBuilder()
-    .setCustomId('verify_modal')
-    .setTitle('Server Verification');
+async function handleVerifyButton(interaction) {
+  const token = await createVerifyToken(interaction.user.id);
+  const url = `${WEBSITE_URL}/verify/${token}`;
 
-  const robloxInput = new TextInputBuilder()
-    .setCustomId('roblox')
-    .setLabel('Your Roblox username')
-    .setStyle(TextInputStyle.Short)
-    .setPlaceholder('e.g. Roblox_user123')
-    .setMaxLength(32);
-
-  const referralInput = new TextInputBuilder()
-    .setCustomId('referral_code')
-    .setLabel('Referral code')
-    .setStyle(TextInputStyle.Short)
-    .setPlaceholder('e.g. VMS-XXXXXX')
-    .setRequired(true)
-    .setMaxLength(16);
-
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(robloxInput),
-    new ActionRowBuilder().addComponents(referralInput)
-  );
-
-  await interaction.showModal(modal);
-}
-
-async function handleVerificationSubmit(interaction) {
-  const roblox = interaction.fields.getTextInputValue('roblox').trim();
-  const referralRaw = interaction.fields.getTextInputValue('referral_code').trim();
-
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
-
-  if (!roblox) {
-    await interaction.followUp({
-      content: 'Please enter your Roblox username.',
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-  if (!referralRaw) {
-    await interaction.followUp({
-      content: 'Please enter a referral code.',
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  const referral = await applyReferralCode(interaction.user.id, referralRaw);
-  if (!referral.ok) {
-    let reason;
-    if (referral.reason === 'not_found') {
-      reason = `Could not find a user with referral code **${referralRaw.toUpperCase()}**.`;
-    } else if (referral.reason === 'self') {
-      reason = 'You cannot use your own referral code.';
-    } else if (referral.reason === 'already_recruited') {
-      reason = 'You have already been credited by another referrer.';
-    } else {
-      reason = 'Invalid referral code.';
-    }
-    await interaction.followUp({
-      content: reason,
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  const member = interaction.member;
-  if (!member) return;
-
-  const added = [];
-  for (const roleId of VERIFIED_ROLE_IDS) {
-    const ok = await member.roles.add(roleId).then(() => true).catch(() => false);
-    if (ok) added.push(roleId);
-  }
-
-  if (UNVERIFIED_ROLE_ID) {
-    await member.roles.remove(UNVERIFIED_ROLE_ID).catch(() => {});
-  }
-
-  await markVerified(interaction.user.id, roblox);
-
-  const logChannel = await getLogChannel(interaction.guild);
-  if (logChannel && logChannel.isSendable()) {
-    const desc = [
-      `**${interaction.user.tag}** (<@${interaction.user.id}>) verified.`,
-      `Roblox username: **${roblox}**`,
-      `Discord ID: \`${interaction.user.id}\``,
-      `Referred via code **${referralRaw.toUpperCase()}** from <@${referral.owner.userId}> (${referral.owner.username})`,
-    ].filter(Boolean).join('\n');
-    logChannel.send({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle('User Verified')
-          .setColor(0x3498db)
-          .setDescription(desc)
-          .setTimestamp(),
-      ],
-    }).catch(() => {});
-  }
-
-  const confirmDesc = [
-    `Welcome, **${roblox}**!`,
-    `You have been verified and granted access.`,
-    `Referred by <@${referral.owner.userId}> (${referral.owner.username}).`,
-  ];
-
-  if (added.length) {
-    await interaction.followUp({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0x2ecc71)
-          .setTitle('Verification Complete')
-          .setDescription(confirmDesc.join('\n')),
-      ],
-      flags: MessageFlags.Ephemeral,
-    });
-  } else {
-    await interaction.followUp({
-      content: 'Verification recorded, but I could not assign roles. ' +
-        'Please contact a staff member (check the bot has Manage Roles permission and the role is below the bot).',
-      flags: MessageFlags.Ephemeral,
-    });
-  }
+  await interaction.reply({
+    content: `Click the link below to start verification:\n${url}\n\nThis link expires in **15 minutes**.`,
+    flags: MessageFlags.Ephemeral,
+  });
 }
 
 async function handleLeaderboard(interaction) {
@@ -568,6 +466,73 @@ async function handleCreditUser(interaction) {
   });
 }
 
+async function handleReport(interaction) {
+  const REPORT_CHANNEL_ID = '1537907968140382350';
+  const ADMIN_ID = '1394914695600934932';
+
+  const reported = interaction.options.getUser('user');
+  const category = interaction.options.getString('category');
+  const description = interaction.options.getString('description');
+  const image = interaction.options.getAttachment('image');
+
+  if (reported.id === interaction.user.id) {
+    await interaction.reply({ content: 'You cannot report yourself.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (reported.bot) {
+    await interaction.reply({ content: 'You cannot report a bot.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const channel = interaction.guild.channels.cache.get(REPORT_CHANNEL_ID) ||
+    (await interaction.guild.channels.fetch(REPORT_CHANNEL_ID).catch(() => null));
+
+  if (!channel) {
+    await interaction.editReply({ content: 'Report channel not found. Contact an admin.' });
+    return;
+  }
+
+  let thread;
+  try {
+    thread = await channel.threads.create({
+      name: `report-${reported.username}`,
+      type: ChannelType.PrivateThread,
+      reason: `Report by ${interaction.user.tag} against ${reported.tag}`,
+    });
+  } catch (err) {
+    console.error('Failed to create report thread:', err);
+    await interaction.editReply({ content: 'Failed to create report thread. Make sure I have Manage Threads permission.' });
+    return;
+  }
+
+  await thread.members.add(interaction.user.id).catch(() => {});
+  await thread.members.add(ADMIN_ID).catch(() => {});
+
+  const embed = new EmbedBuilder()
+    .setTitle('User Report')
+    .setColor(0xe74c3c)
+    .addFields(
+      { name: 'Reported By', value: `${interaction.user.tag} (<@${interaction.user.id}>)`, inline: true },
+      { name: 'Reported User', value: `${reported.tag} (<@${reported.id}>)`, inline: true },
+      { name: 'Category', value: category, inline: true },
+      { name: 'Description', value: description },
+    )
+    .setTimestamp()
+    .setFooter({ text: `Report from ${interaction.guild.name}` });
+
+  if (image) {
+    embed.setImage(image.url);
+  }
+
+  await thread.send({ embeds: [embed] });
+
+  await interaction.editReply({
+    content: `✅ Report submitted. A staff member will review it in <#${thread.id}>.`,
+  });
+}
+
 const SERVERCHECK_GUILD_ID = '1529774509555453962';
 
 async function handleServerCheck(interaction) {
@@ -626,6 +591,52 @@ function formatDuration(seconds) {
   return `${s}s`;
 }
 
+async function sendApprovalDM(userId, robloxUsername) {
+  const user = await client.users.fetch(userId).catch(() => null);
+  if (!user) return false;
+  try {
+    await user.send({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('Application Accepted')
+          .setColor(0x2ecc71)
+          .setDescription(
+            `Welcome to the server${robloxUsername ? `, **${robloxUsername}**` : ''}!\n\n` +
+            'Your application has been reviewed and **approved**.\n' +
+            'You now have full access to the server.\n' +
+            'If you have any questions, contact a staff member.'
+          )
+          .setTimestamp(),
+      ],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function sendRejectionDM(userId) {
+  const user = await client.users.fetch(userId).catch(() => null);
+  if (!user) return false;
+  try {
+    await user.send({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('Application Rejected')
+          .setColor(0xe74c3c)
+          .setDescription(
+            'Your verification application was **not approved**.\n\n' +
+            'If you believe this is an error, please contact a staff member.'
+          )
+          .setTimestamp(),
+      ],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 client.once(Events.ClientReady, async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
@@ -659,6 +670,24 @@ client.once(Events.ClientReady, async () => {
       .setName('servercheck')
       .setDescription('Check if a user has a record in the target server')
       .addUserOption((o) => o.setName('user').setDescription('User to check (default: you)')),
+    new SlashCommandBuilder()
+      .setName('report')
+      .setDescription('Report a user to staff')
+      .addUserOption((o) => o.setName('user').setDescription('The user to report').setRequired(true))
+      .addStringOption((o) =>
+        o.setName('category')
+          .setDescription('Report reason')
+          .setRequired(true)
+          .addChoices(
+            { name: 'Breaking the rules', value: 'Breaking the rules' },
+            { name: 'Advertising', value: 'Advertising' },
+            { name: 'Spamming', value: 'Spamming' },
+            { name: 'Spy', value: 'Spy' },
+            { name: 'Malicious Mischief', value: 'Malicious Mischief' },
+            { name: 'Hacking/Doxing', value: 'Hacking/Doxing' },
+          ))
+      .addStringOption((o) => o.setName('description').setDescription('Describe the issue').setRequired(true))
+      .addAttachmentOption((o) => o.setName('image').setDescription('Optional screenshot or evidence')),
   ];
 
   if (GUILD_ID) {
@@ -698,14 +727,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction.commandName === 'refer') return handleRefer(interaction);
       if (interaction.commandName === 'credituser') return handleCreditUser(interaction);
       if (interaction.commandName === 'servercheck') return handleServerCheck(interaction);
+      if (interaction.commandName === 'report') return handleReport(interaction);
     }
 
     if (interaction.isButton() && interaction.customId === 'verify_open') {
-      return openVerificationModal(interaction);
-    }
-
-    if (interaction.isModalSubmit() && interaction.customId === 'verify_modal') {
-      return handleVerificationSubmit(interaction);
+      return handleVerifyButton(interaction);
     }
   } catch (err) {
     console.error('Interaction error:', err);
@@ -725,13 +751,664 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 process.on('unhandledRejection', (err) => console.error('Unhandled rejection:', err));
 
+const app = express();
+app.use(cookieParser());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+function generatePage(title, body) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${title}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background:#1a1a2e;color:#e0e0e0;min-height:100vh;display:flex;justify-content:center;align-items:center;padding:20px}
+.container{background:#16213e;border-radius:16px;padding:40px;max-width:600px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,0.3)}
+h1{color:#5865f2;margin-bottom:8px;font-size:1.8em}
+h2{color:#5865f2;margin-bottom:16px;font-size:1.4em}
+p{color:#b0b0b0;margin-bottom:16px;line-height:1.6}
+.btn{display:inline-block;padding:12px 24px;border-radius:8px;border:none;font-size:16px;font-weight:600;cursor:pointer;text-decoration:none;transition:all .2s}
+.btn-discord{background:#5865f2;color:#fff}.btn-discord:hover{background:#4752c4}
+.btn-primary{background:#5865f2;color:#fff}.btn-primary:hover{background:#4752c4}
+.btn-success{background:#2ecc71;color:#fff}.btn-success:hover{background:#27ae60}
+.btn-danger{background:#e74c3c;color:#fff}.btn-danger:hover{background:#c0392b}
+.btn-no{background:#95a5a6;color:#fff}.btn-no:hover{background:#7f8c8d}
+.btn-sm{padding:8px 16px;font-size:13px}
+input[type=text],textarea{width:100%;padding:12px;border-radius:8px;border:1px solid #2a2a4a;background:#0f3460;color:#e0e0e0;font-size:14px;margin-bottom:12px;font-family:inherit}
+input[type=text]:focus,textarea:focus{outline:none;border-color:#5865f2}
+textarea{min-height:80px;resize:vertical}
+label{display:block;color:#b0b0b0;margin-bottom:6px;font-size:14px}
+.info-card{background:#0f3460;border-radius:12px;padding:16px;margin-bottom:16px}
+.info-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #1a1a3e}
+.info-row:last-child{border-bottom:none}
+.check{color:#2ecc71;font-weight:bold}.cross{color:#e74c3c;font-weight:bold}
+.warning{color:#f39c12}
+.avatar{width:64px;height:64px;border-radius:50%;margin-bottom:12px}
+.pending-box{text-align:center;padding:40px}
+.pending-box h1{font-size:2em;margin-bottom:12px}
+.status-badge{display:inline-block;padding:4px 12px;border-radius:12px;font-size:12px;font-weight:600}
+.badge-pending{background:#f39c12;color:#000}
+.badge-approved{background:#2ecc71;color:#fff}
+.badge-rejected{background:#e74c3c;color:#fff}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:10px 8px;color:#5865f2;border-bottom:2px solid #2a2a4a}
+td{padding:8px;border-bottom:1px solid #1a1a3e;vertical-align:top}
+tr:hover{background:#1a1a3e}
+.search{margin-bottom:16px}
+.stats-bar{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+.stat-card{background:#0f3460;border-radius:8px;padding:12px 16px;text-align:center;flex:1;min-width:100px}
+.stat-num{font-size:1.5em;font-weight:bold;color:#5865f2}
+.stat-label{font-size:11px;color:#888;margin-top:4px}
+.app-row{cursor:pointer}
+.app-row:hover{background:#1a1a3e}
+.detail-panel{background:#0f3460;border-radius:12px;padding:20px;margin-top:16px}
+</style>
+</head>
+<body>${body}</body>
+</html>`;
+}
+
+app.get('/', (req, res) => {
+  res.send('OK');
+});
+
+app.get('/verify/:token', async (req, res) => {
+  const { token } = req.params;
+  const doc = await getVerifyToken(token);
+
+  if (!doc || doc.completed) {
+    res.status(400).send(generatePage('Invalid Link', `
+      <div class="container" style="text-align:center">
+        <h1>Link Invalid or Expired</h1>
+        <p>This verification link is no longer valid. Please go back to Discord and click the Verify button again to get a new link.</p>
+      </div>
+    `));
+    return;
+  }
+
+  const created = new Date(doc.createdAt).getTime();
+  if (Date.now() - created > 15 * 60 * 1000) {
+    res.status(400).send(generatePage('Link Expired', `
+      <div class="container" style="text-align:center">
+        <h1>Link Expired</h1>
+        <p>This verification link has expired (15 minute limit). Please go back to Discord and click the Verify button again.</p>
+      </div>
+    `));
+    return;
+  }
+
+  const user = await client.users.fetch(doc.userId).catch(() => null);
+  if (!user) {
+    res.status(400).send(generatePage('Error', `
+      <div class="container" style="text-align:center">
+        <h1>User Not Found</h1>
+        <p>Could not find your Discord account. Please try again.</p>
+      </div>
+    `));
+    return;
+  }
+
+  let inMainServer = false;
+  try {
+    const memberCheck = await fetch(`https://discord.com/api/v10/guilds/${GUILD_ID}/members/${doc.userId}`, {
+      headers: { Authorization: `Bot ${TOKEN}` },
+    });
+    inMainServer = memberCheck.ok;
+  } catch {}
+
+  if (!inMainServer) {
+    res.status(403).send(generatePage('Error 67', `
+      <div class="container" style="text-align:center">
+        <div style="font-size:48px;margin-bottom:16px">🚫</div>
+        <h1>Error 67</h1>
+        <p>You are not in the server.</p>
+        <p style="color:#888;margin-top:24px;font-size:13px">Join the server first, then try again.</p>
+      </div>
+    `));
+    return;
+  }
+
+  const accountAge = Math.floor((Date.now() - user.createdTimestamp) / (1000 * 60 * 60 * 24));
+  const hasAvatar = user.avatar !== null;
+  const ageWarning = accountAge < 7;
+
+  if (ageWarning || !hasAvatar) {
+    res.status(403).send(generatePage('Error 69', `
+      <div class="container" style="text-align:center">
+        <div style="font-size:48px;margin-bottom:16px">⚠️</div>
+        <h1>Error 69</h1>
+        <p>Alt Detected.</p>
+        <p style="color:#888;margin-top:24px;font-size:13px">Your account appears to be too new or incomplete.</p>
+      </div>
+      <script>
+        try {
+          var ctx = new (window.AudioContext || window.webkitAudioContext)();
+          function playAlarm(freq, startTime, dur) {
+            var osc = ctx.createOscillator();
+            var gain = ctx.createGain();
+            osc.type = 'square';
+            osc.frequency.value = freq;
+            gain.gain.value = 0.5;
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(startTime);
+            osc.stop(startTime + dur);
+          }
+          for (var i = 0; i < 5; i++) {
+            playAlarm(880, i * 0.2, 0.1);
+            playAlarm(660, i * 0.2 + 0.1, 0.1);
+          }
+          setTimeout(function() { ctx.close(); }, 2000);
+        } catch(e) {}
+      </script>
+    `));
+    return;
+  }
+
+  let inThirdLeg = false;
+  let inBnf = false;
+  try {
+    const memberTL = await fetch(`https://discord.com/api/v10/guilds/${THIRD_LEG_ID}/members/${doc.userId}`, {
+      headers: { Authorization: `Bot ${TOKEN}` },
+    });
+    inThirdLeg = memberTL.ok;
+    const memberBNF = await fetch(`https://discord.com/api/v10/guilds/${BNF_ID}/members/${doc.userId}`, {
+      headers: { Authorization: `Bot ${TOKEN}` },
+    });
+    inBnf = memberBNF.ok;
+  } catch {}
+
+  const avatarUrl = user.displayAvatarURL({ size: 128 });
+
+  res.send(generatePage('Server Verification', `
+    <div class="container">
+      <h1>Server Verification</h1>
+      <p>Complete the form below to submit your application.</p>
+
+      <div class="info-card">
+        <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px">
+          <img src="${avatarUrl}" class="avatar" alt="avatar">
+          <div>
+            <div style="font-size:18px;font-weight:600">${user.username}</div>
+            <div style="color:#888;font-size:13px">${user.id}</div>
+          </div>
+        </div>
+        <div class="info-row">
+          <span>Account Age</span>
+          <span>${accountAge} days ${ageWarning ? '<span class="warning">⚠️ New account</span>' : '✅'}</span>
+        </div>
+        <div class="info-row">
+          <span>Has Avatar</span>
+          <span>${hasAvatar ? '✅' : '<span class="warning">⚠️ No avatar</span>'}</span>
+        </div>
+        <div class="info-row">
+          <span>Third Leg</span>
+          <span>${inThirdLeg ? '<span class="check">✅ Member</span>' : '<span class="cross">❌ Not a member</span>'}</span>
+        </div>
+        <div class="info-row">
+          <span>Bnf</span>
+          <span>${inBnf ? '<span class="check">✅ Member</span>' : '<span class="cross">❌ Not a member</span>'}</span>
+        </div>
+      </div>
+
+      <form method="POST" action="/verify/submit">
+        <input type="hidden" name="token" value="${token}">
+
+        <label>Roblox Username</label>
+        <input type="text" name="roblox" placeholder="Enter your Roblox username" maxlength="32">
+        <button type="button" class="btn btn-no btn-sm" style="margin-bottom:16px" onclick="document.getElementById('noRobloxSection').style.display='block';document.querySelector('[name=roblox]').value='';document.querySelector('[name=roblox]').disabled=true">I don't have a Roblox account</button>
+        <div id="noRobloxSection" style="display:none;margin-bottom:16px;padding:12px;background:#0f3460;border-radius:8px">
+          <p style="margin:0;color:#f39c12">✓ No Roblox account selected</p>
+          <input type="hidden" name="noRoblox" value="true">
+        </div>
+
+        <label>Referral Code (optional)</label>
+        <input type="text" name="referral" placeholder="e.g. VMS-XXXXXX" maxlength="16">
+
+        <label>Why do you want to join this server?</label>
+        <textarea name="whyJoin" placeholder="Tell us why you want to join..." required maxlength="500"></textarea>
+
+        <label>How did you find this server?</label>
+        <textarea name="howFound" placeholder="Tell us how you found us..." required maxlength="500"></textarea>
+
+        <button type="submit" class="btn btn-primary" style="width:100%;margin-top:8px">Submit Application</button>
+      </form>
+    </div>
+  `));
+});
+
+app.post('/verify/submit', async (req, res) => {
+  const { token, roblox, noRoblox, referral, whyJoin, howFound } = req.body;
+
+  const doc = await getVerifyToken(token);
+  if (!doc || doc.completed) {
+    res.status(400).send(generatePage('Error', '<div class="container"><h1>Invalid Request</h1><p>Please start over from Discord.</p></div>'));
+    return;
+  }
+
+  const user = await client.users.fetch(doc.userId).catch(() => null);
+  if (!user) {
+    res.status(400).send(generatePage('Error', '<div class="container"><h1>User Not Found</h1><p>Please try again.</p></div>'));
+    return;
+  }
+
+  let robloxValid = false;
+  let robloxData = null;
+  if (roblox && roblox.trim()) {
+    try {
+      const resp = await fetch('https://users.roblox.com/v1/usernames/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usernames: [roblox.trim()] }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.data && data.data.length > 0) {
+          robloxValid = true;
+          robloxData = data.data[0];
+        }
+      }
+    } catch {}
+  }
+
+  let referralInfo = null;
+  if (referral && referral.trim()) {
+    const result = await applyReferralCode(doc.userId, referral.trim());
+    if (result.ok) {
+      referralInfo = result.owner;
+    }
+  }
+
+  const accountAge = Math.floor((Date.now() - user.createdTimestamp) / (1000 * 60 * 60 * 24));
+  const hasAvatar = user.avatar !== null;
+
+  let inThirdLeg = false;
+  let inBnf = false;
+  try {
+    const memberTL = await fetch(`https://discord.com/api/v10/guilds/${THIRD_LEG_ID}/members/${doc.userId}`, {
+      headers: { Authorization: `Bot ${TOKEN}` },
+    });
+    inThirdLeg = memberTL.ok;
+    const memberBNF = await fetch(`https://discord.com/api/v10/guilds/${BNF_ID}/members/${doc.userId}`, {
+      headers: { Authorization: `Bot ${TOKEN}` },
+    });
+    inBnf = memberBNF.ok;
+  } catch {}
+
+  await saveApplication(doc.userId, {
+    robloxUsername: robloxValid ? robloxData.name : (noRoblox === 'true' ? null : (roblox ? roblox.trim() : null)),
+    noRoblox: noRoblox === 'true',
+    referralCodeUsed: referral && referral.trim() ? referral.trim().toUpperCase() : null,
+    referralOwnerId: referralInfo ? referralInfo.userId : null,
+    referralOwnerName: referralInfo ? referralInfo.username : null,
+    whyJoin: whyJoin || null,
+    howFound: howFound || null,
+    discordCreatedAt: user.createdAt.toISOString(),
+    hasAvatar,
+    serverChecks: { ThirdLeg: inThirdLeg, Bnf: inBnf },
+  });
+
+  await markVerifyTokenUsed(token);
+
+  let robloxMsg = 'None';
+  if (noRoblox === 'true') {
+    robloxMsg = 'No Roblox account';
+  } else if (robloxValid) {
+    robloxMsg = robloxData.name;
+  } else if (roblox) {
+    robloxMsg = `${roblox.trim()} (not found)`;
+  }
+
+  const guild = client.guilds.cache.get(GUILD_ID);
+  if (guild) {
+    const logChannel = await getLogChannel(guild);
+    if (logChannel && logChannel.isSendable()) {
+      logChannel.send({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('New Application Submitted')
+            .setColor(0xf39c12)
+            .setDescription([
+              `**${user.tag}** (<@${user.id}>) submitted an application.`,
+              `Roblox: **${robloxMsg}**`,
+              `Account Age: **${accountAge} days** ${accountAge < 7 ? '⚠️' : ''}`,
+              `Avatar: ${hasAvatar ? '✅' : '⚠️ None'}`,
+              `Third Leg: ${inThirdLeg ? '✅' : '❌'}`,
+              `Bnf: ${inBnf ? '✅' : '❌'}`,
+              referralInfo ? `Referral Code: **${referral.trim().toUpperCase()}** from <@${referralInfo.userId}> (${referralInfo.username})` : null,
+              `Why Join: ${whyJoin || '—'}`,
+              `How Found: ${howFound || '—'}`,
+            ].filter(Boolean).join('\n'))
+            .setTimestamp(),
+        ],
+      }).catch(() => {});
+    }
+  }
+
+  res.send(generatePage('Application Submitted', `
+    <div class="container pending-box">
+      <div style="font-size:48px;margin-bottom:16px">✅</div>
+      <h1>Application Submitted!</h1>
+      <p>Your application is now <strong>pending review</strong> by an admin.</p>
+      <p>You will receive a DM on Discord once a decision has been made.</p>
+      <p style="color:#888;margin-top:24px;font-size:13px">You can close this page now.</p>
+    </div>
+  `));
+});
+
+app.get('/admin/login', (req, res) => {
+  const state = crypto.randomBytes(16).toString('hex');
+  const params = new URLSearchParams({
+    client_id: DISCORD_CLIENT_ID,
+    redirect_uri: `${WEBSITE_URL}/admin/callback`,
+    response_type: 'code',
+    scope: 'identify',
+    state,
+  });
+  res.redirect(`https://discord.com/api/oauth2/authorize?${params}`);
+});
+
+app.get('/admin/callback', async (req, res) => {
+  const { code } = req.query;
+  if (!code) {
+    res.status(400).send(generatePage('Error', '<div class="container"><h1>Authorization Failed</h1><p>No code provided.</p></div>'));
+    return;
+  }
+
+  try {
+    const resp = await fetch('https://discord.com/api/v10/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: `${WEBSITE_URL}/admin/callback`,
+        client_id: DISCORD_CLIENT_ID,
+        client_secret: DISCORD_CLIENT_SECRET,
+      }),
+    });
+
+    if (!resp.ok) {
+      res.status(400).send(generatePage('Error', '<div class="container"><h1>Token Exchange Failed</h1><p>Please try again.</p></div>'));
+      return;
+    }
+
+    const tokenData = await resp.json();
+    const userResp = await fetch('https://discord.com/api/v10/users/@me', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+
+    if (!userResp.ok) {
+      res.status(400).send(generatePage('Error', '<div class="container"><h1>Failed to get user info</h1></div>'));
+      return;
+    }
+
+    const userData = await userResp.json();
+
+    if (userData.id !== ADMIN_USER_ID) {
+      res.status(403).send(generatePage('Access Denied', `
+        <div class="container" style="text-align:center">
+          <h1>Access Denied</h1>
+          <p>You are not authorized to access the admin dashboard.</p>
+          <p style="color:#888">Your ID: ${userData.id}</p>
+        </div>
+      `));
+      return;
+    }
+
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    const db = require('./mongo').getDb();
+    await db.collection('admin_sessions').insertOne({
+      token: sessionToken,
+      userId: userData.id,
+      username: userData.username,
+      createdAt: new Date(),
+    });
+
+    res.cookie('admin_session', sessionToken, {
+      httpOnly: true,
+      maxAge: 24 * 60 * 60 * 1000,
+      sameSite: 'lax',
+    });
+
+    res.redirect('/admin');
+  } catch (err) {
+    console.error('Admin OAuth error:', err);
+    res.status(500).send(generatePage('Error', '<div class="container"><h1>Server Error</h1><p>Please try again.</p></div>'));
+  }
+});
+
+async function requireAdmin(req, res, next) {
+  const sessionToken = req.cookies?.admin_session;
+  if (!sessionToken) {
+    res.redirect('/admin/login');
+    return;
+  }
+  const db = require('./mongo').getDb();
+  const session = await db.collection('admin_sessions').findOne({ token: sessionToken });
+  if (!session || session.userId !== ADMIN_USER_ID) {
+    res.redirect('/admin/login');
+    return;
+  }
+  req.adminUser = { userId: session.userId, username: session.username };
+  next();
+}
+
+app.get('/admin', requireAdmin, async (req, res) => {
+  const apps = await getAllApplications();
+
+  const pending = apps.filter(a => a.status === 'pending');
+  const approved = apps.filter(a => a.status === 'approved');
+  const rejected = apps.filter(a => a.status === 'rejected');
+
+  const appRows = apps.map(a => {
+    const age = a.discordCreatedAt ? Math.floor((Date.now() - new Date(a.discordCreatedAt).getTime()) / (1000 * 60 * 60 * 24)) : '?';
+    const ageWarn = typeof age === 'number' && age < 7 ? '<span class="warning">⚠️</span>' : '✅';
+    const avatarCheck = a.hasAvatar ? '✅' : '<span class="warning">⚠️</span>';
+    const tlCheck = a.serverChecks?.ThirdLeg ? '<span class="check">✅</span>' : '<span class="cross">❌</span>';
+    const bnfCheck = a.serverChecks?.Bnf ? '<span class="check">✅</span>' : '<span class="cross">❌</span>';
+
+    let statusBadge = '';
+    if (a.status === 'pending') statusBadge = '<span class="status-badge badge-pending">⏳ Pending</span>';
+    else if (a.status === 'approved') statusBadge = '<span class="status-badge badge-approved">✅ Approved</span>';
+    else if (a.status === 'rejected') statusBadge = '<span class="status-badge badge-rejected">❌ Rejected</span>';
+    else statusBadge = '—';
+
+    const referralDisplay = a.referralCodeUsed
+      ? `${a.referralCodeUsed}<br><span style="color:#888;font-size:11px">${a.referralOwnerName || '?'}</span>`
+      : '—';
+
+    const actions = a.status === 'pending'
+      ? `<button class="btn btn-success btn-sm" onclick="event.stopPropagation();approveUser('${a.userId}')">✅ Approve</button>
+         <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();rejectUser('${a.userId}')">❌ Reject</button>`
+      : '';
+
+    return `<tr class="app-row" onclick="showDetail('${a.userId}')">
+      <td><strong>${a.username || 'Unknown'}</strong><br><span style="color:#888;font-size:11px">${a.userId}</span></td>
+      <td>${age}d ${ageWarn}</td>
+      <td>${avatarCheck}</td>
+      <td>${tlCheck}</td>
+      <td>${bnfCheck}</td>
+      <td>${a.robloxUsername || (a.noRoblox ? '<em>None</em>' : '—')}</td>
+      <td>${referralDisplay}</td>
+      <td>${statusBadge}</td>
+      <td>${actions}</td>
+    </tr>`;
+  }).join('');
+
+  const detailPanels = apps.map(a => {
+    return `<div id="detail-${a.userId}" style="display:none" class="detail-panel">
+      <h3 style="margin-bottom:12px">${a.username || 'Unknown'} — Application Details</h3>
+      <div class="info-row"><span>Discord ID</span><span>${a.userId}</span></div>
+      <div class="info-row"><span>Roblox</span><span>${a.robloxUsername || (a.noRoblox ? 'No account' : '—')}</span></div>
+      <div class="info-row"><span>Referral Code Used</span><span>${a.referralCodeUsed || '—'}</span></div>
+      <div class="info-row"><span>Referral Owner</span><span>${a.referralOwnerName ? `${a.referralOwnerName} (${a.referralOwnerId})` : '—'}</span></div>
+      <div class="info-row"><span>Account Age</span><span>${a.discordCreatedAt ? Math.floor((Date.now() - new Date(a.discordCreatedAt).getTime()) / (1000 * 60 * 60 * 24)) : '?'} days</span></div>
+      <div class="info-row"><span>Has Avatar</span><span>${a.hasAvatar ? 'Yes' : 'No'}</span></div>
+      <div class="info-row"><span>Third Leg</span><span>${a.serverChecks?.ThirdLeg ? '✅ Yes' : '❌ No'}</span></div>
+      <div class="info-row"><span>Bnf</span><span>${a.serverChecks?.Bnf ? '✅ Yes' : '❌ No'}</span></div>
+      <div style="margin-top:12px"><strong>Why Join:</strong><br><div style="background:#1a1a2e;padding:12px;border-radius:8px;margin-top:4px">${a.whyJoin || '—'}</div></div>
+      <div style="margin-top:12px"><strong>How Found:</strong><br><div style="background:#1a1a2e;padding:12px;border-radius:8px;margin-top:4px">${a.howFound || '—'}</div></div>
+      ${a.verifiedBy ? `<div class="info-row" style="margin-top:12px"><span>Verified By</span><span>${a.verifiedBy}</span></div>` : ''}
+    </div>`;
+  }).join('');
+
+  res.send(generatePage('Admin Dashboard', `
+    <div class="container" style="max-width:1200px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+        <h1>Admin Dashboard</h1>
+        <span style="color:#888">Logged in as ${req.adminUser.username}</span>
+      </div>
+
+      <div class="stats-bar">
+        <div class="stat-card"><div class="stat-num">${apps.length}</div><div class="stat-label">Total</div></div>
+        <div class="stat-card"><div class="stat-num" style="color:#f39c12">${pending.length}</div><div class="stat-label">Pending</div></div>
+        <div class="stat-card"><div class="stat-num" style="color:#2ecc71">${approved.length}</div><div class="stat-label">Approved</div></div>
+        <div class="stat-card"><div class="stat-num" style="color:#e74c3c">${rejected.length}</div><div class="stat-label">Rejected</div></div>
+      </div>
+
+      <input type="text" class="search" placeholder="Search by username, Roblox, referral code..." oninput="filterTable(this.value)">
+
+      <div style="overflow-x:auto">
+        <table id="appTable">
+          <thead>
+            <tr>
+              <th>Discord</th>
+              <th>Age</th>
+              <th>Avatar</th>
+              <th>Third Leg</th>
+              <th>Bnf</th>
+              <th>Roblox</th>
+              <th>Referral</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>${appRows}</tbody>
+        </table>
+      </div>
+
+      ${detailPanels}
+
+      <script>
+        function filterTable(q) {
+          q = q.toLowerCase();
+          document.querySelectorAll('#appTable tbody tr').forEach(r => {
+            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
+          });
+        }
+        function showDetail(userId) {
+          document.querySelectorAll('.detail-panel').forEach(p => p.style.display = 'none');
+          const panel = document.getElementById('detail-' + userId);
+          if (panel) panel.style.display = 'block';
+        }
+        async function approveUser(userId) {
+          if (!confirm('Approve this user?')) return;
+          const resp = await fetch('/admin/api/approve/' + userId, { method: 'POST' });
+          if (resp.ok) location.reload();
+          else alert('Failed to approve user.');
+        }
+        async function rejectUser(userId) {
+          if (!confirm('Reject this user?')) return;
+          const resp = await fetch('/admin/api/reject/' + userId, { method: 'POST' });
+          if (resp.ok) location.reload();
+          else alert('Failed to reject user.');
+        }
+      </script>
+    </div>
+  `));
+});
+
+app.post('/admin/api/approve/:userId', requireAdmin, async (req, res) => {
+  const { userId } = req.params;
+  const appDoc = await getApplication(userId);
+  if (!appDoc) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+
+  await approveApplication(userId, req.adminUser.userId);
+
+  const guild = client.guilds.cache.get(GUILD_ID);
+  if (guild) {
+    const member = await guild.members.fetch(userId).catch(() => null);
+    if (member) {
+      for (const roleId of VERIFIED_ROLE_IDS) {
+        await member.roles.add(roleId).catch(() => {});
+      }
+      if (UNVERIFIED_ROLE_ID) {
+        await member.roles.remove(UNVERIFIED_ROLE_ID).catch(() => {});
+      }
+    }
+  }
+
+  const dmSent = await sendApprovalDM(userId, appDoc.robloxUsername);
+
+  const logChannel = await getLogChannel(guild);
+  if (logChannel && logChannel.isSendable()) {
+    logChannel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('User Approved')
+          .setColor(0x2ecc71)
+          .setDescription([
+            `**${appDoc.username || 'Unknown'}** (<@${userId}>) approved.`,
+            `Roblox: **${appDoc.robloxUsername || (appDoc.noRoblox ? 'No account' : '—')}**`,
+            `Referral Code: **${appDoc.referralCodeUsed || '—'}** ${appDoc.referralOwnerName ? `from <@${appDoc.referralOwnerId}> (${appDoc.referralOwnerName})` : ''}`,
+            `Third Leg: ${appDoc.serverChecks?.ThirdLeg ? '✅' : '❌'}`,
+            `Bnf: ${appDoc.serverChecks?.Bnf ? '✅' : '❌'}`,
+            `Approved by: <@${req.adminUser.userId}>`,
+            `DM sent: ${dmSent ? '✅' : '⚠️ Could not send DM'}`,
+          ].filter(Boolean).join('\n'))
+          .setTimestamp(),
+      ],
+    }).catch(() => {});
+  }
+
+  res.json({ ok: true });
+});
+
+app.post('/admin/api/reject/:userId', requireAdmin, async (req, res) => {
+  const { userId } = req.params;
+  const appDoc = await getApplication(userId);
+  if (!appDoc) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+
+  await rejectApplication(userId, req.adminUser.userId);
+
+  const dmSent = await sendRejectionDM(userId);
+
+  const logChannel = await getLogChannel(client.guilds.cache.get(GUILD_ID));
+  if (logChannel && logChannel.isSendable()) {
+    logChannel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('User Rejected')
+          .setColor(0xe74c3c)
+          .setDescription([
+            `**${appDoc.username || 'Unknown'}** (<@${userId}>) rejected.`,
+            `Roblox: **${appDoc.robloxUsername || (appDoc.noRoblox ? 'No account' : '—')}**`,
+            `Referral Code: **${appDoc.referralCodeUsed || '—'}** ${appDoc.referralOwnerName ? `from <@${appDoc.referralOwnerId}> (${appDoc.referralOwnerName})` : ''}`,
+            `Rejected by: <@${req.adminUser.userId}>`,
+            `DM sent: ${dmSent ? '✅' : '⚠️ Could not send DM'}`,
+          ].filter(Boolean).join('\n'))
+          .setTimestamp(),
+      ],
+    }).catch(() => {});
+  }
+
+  res.json({ ok: true });
+});
+
 function startServer() {
   const port = process.env.PORT || 3000;
-  http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('OK');
-  }).listen(port, () => {
-    console.log(`Listening on port ${port}`);
+  http.createServer(app).listen(port, () => {
+    console.log(`Express listening on port ${port}`);
   });
 }
 

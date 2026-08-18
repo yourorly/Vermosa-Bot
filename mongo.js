@@ -270,6 +270,68 @@ async function lookupServerRecord(userId, guildId) {
   return doc;
 }
 
+const crypto = require('node:crypto');
+
+async function createVerifyToken(userId) {
+  const tokens = db.collection('verify_tokens');
+  const token = crypto.randomBytes(32).toString('hex');
+  await tokens.insertOne({
+    token,
+    userId,
+    createdAt: new Date(),
+    completed: false,
+  });
+  return token;
+}
+
+async function getVerifyToken(token) {
+  return db.collection('verify_tokens').findOne({ token });
+}
+
+async function markVerifyTokenUsed(token) {
+  return db.collection('verify_tokens').updateOne({ token }, { $set: { completed: true } });
+}
+
+async function saveApplication(userId, data) {
+  const users = db.collection('users');
+  const $set = {
+    status: 'pending',
+    robloxUsername: data.robloxUsername || null,
+    noRoblox: data.noRoblox || false,
+    referralCodeUsed: data.referralCodeUsed || null,
+    referralOwnerId: data.referralOwnerId || null,
+    referralOwnerName: data.referralOwnerName || null,
+    whyJoin: data.whyJoin || null,
+    howFound: data.howFound || null,
+    discordCreatedAt: data.discordCreatedAt || null,
+    hasAvatar: data.hasAvatar || false,
+    serverChecks: data.serverChecks || { ThirdLeg: false, Bnf: false },
+  };
+  await users.updateOne({ userId }, { $set });
+}
+
+async function getApplication(userId) {
+  return db.collection('users').findOne({ userId });
+}
+
+async function getAllApplications() {
+  return db.collection('users').find({}).sort({ createdAt: -1 }).toArray();
+}
+
+async function approveApplication(userId, adminId) {
+  return db.collection('users').updateOne(
+    { userId },
+    { $set: { status: 'approved', verifiedBy: `admin:${adminId}`, verifiedAt: new Date(), verified: true } }
+  );
+}
+
+async function rejectApplication(userId, adminId) {
+  return db.collection('users').updateOne(
+    { userId },
+    { $set: { status: 'rejected', flagged: true, verifiedBy: `rejected:${adminId}` } }
+  );
+}
+
 module.exports = {
   connect,
   getDb,
@@ -288,4 +350,12 @@ module.exports = {
   getReferLinksByOwner,
   deleteReferLinksByOwner,
   lookupServerRecord,
+  createVerifyToken,
+  getVerifyToken,
+  markVerifyTokenUsed,
+  saveApplication,
+  getApplication,
+  getAllApplications,
+  approveApplication,
+  rejectApplication,
 };
