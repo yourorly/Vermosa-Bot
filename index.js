@@ -1007,18 +1007,6 @@ app.get('/verify/:token', async (req, res) => {
 
         <div class="step" id="step1">
           <div class="step-inner">
-            <h2 style="text-align:center;margin-bottom:4px">Referral Code</h2>
-            <p style="text-align:center;margin-bottom:20px;font-size:13px">Enter the referral code from the person who invited you.</p>
-            <input type="text" name="referral" id="referralInput" placeholder="e.g. VMS-XXXXXX" maxlength="16" required style="text-align:center;font-size:16px">
-          </div>
-          <div style="display:flex;gap:8px;margin-top:16px">
-            <button type="button" class="btn btn-no" style="flex:0.4" onclick="prevStep()">← Back</button>
-            <button type="button" class="btn btn-primary" style="flex:1" onclick="nextStep()">Next →</button>
-          </div>
-        </div>
-
-        <div class="step" id="step2">
-          <div class="step-inner">
             <h2 style="text-align:center;margin-bottom:4px">Why do you want to join?</h2>
             <p style="text-align:center;margin-bottom:20px;font-size:13px">Tell us why you'd like to be part of this community.</p>
             <textarea name="whyJoin" id="whyJoinInput" placeholder="Type your answer here..." required maxlength="500" style="min-height:120px;text-align:center"></textarea>
@@ -1029,11 +1017,23 @@ app.get('/verify/:token', async (req, res) => {
           </div>
         </div>
 
-        <div class="step" id="step3">
+        <div class="step" id="step2">
           <div class="step-inner">
             <h2 style="text-align:center;margin-bottom:4px">How did you find us?</h2>
             <p style="text-align:center;margin-bottom:20px;font-size:13px">How did you discover this server?</p>
             <textarea name="howFound" id="howFoundInput" placeholder="Type your answer here..." required maxlength="500" style="min-height:120px;text-align:center"></textarea>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:16px">
+            <button type="button" class="btn btn-no" style="flex:0.4" onclick="prevStep()">← Back</button>
+            <button type="button" class="btn btn-primary" style="flex:1" onclick="nextStep()">Next →</button>
+          </div>
+        </div>
+
+        <div class="step" id="step3">
+          <div class="step-inner">
+            <h2 style="text-align:center;margin-bottom:4px">Referral Code</h2>
+            <p style="text-align:center;margin-bottom:20px;font-size:13px">Enter the referral code from the person who invited you.</p>
+            <input type="text" name="referral" id="referralInput" placeholder="e.g. VMS-XXXXXX" maxlength="16" required style="text-align:center;font-size:16px">
           </div>
           <div style="display:flex;gap:8px;margin-top:16px">
             <button type="button" class="btn btn-no" style="flex:0.4" onclick="prevStep()">← Back</button>
