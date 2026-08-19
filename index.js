@@ -812,8 +812,11 @@ p{color:#b0b0b0;margin-bottom:16px;line-height:1.6}
 .btn-danger{background:#e74c3c;color:#fff}.btn-danger:hover{background:#c0392b}
 .btn-no{background:#95a5a6;color:#fff}.btn-no:hover{background:#7f8c8d}
 .btn-sm{padding:8px 16px;font-size:13px}
-input[type=text],textarea{width:100%;padding:12px;border-radius:8px;border:1px solid #2a2a4a;background:#0f3460;color:#e0e0e0;font-size:14px;margin-bottom:12px;font-family:inherit}
-input[type=text]:focus,textarea:focus{outline:none;border-color:#5865f2}
+input[type=text],input[type=number],textarea{width:100%;padding:12px;border-radius:8px;border:1px solid #2a2a4a;background:#0f3460;color:#e0e0e0;font-size:14px;margin-bottom:12px;font-family:inherit}
+input[type=text]:focus,input[type=number]:focus,textarea:focus{outline:none;border-color:#5865f2}
+input[type=number]{-moz-appearance:textfield}
+input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.referral-input{text-transform:uppercase;letter-spacing:1px}
 textarea{min-height:80px;resize:vertical}
 label{display:block;color:#b0b0b0;margin-bottom:6px;font-size:14px}
 .info-card{background:#0f3460;border-radius:12px;padding:16px;margin-bottom:16px}
@@ -1047,7 +1050,7 @@ app.get('/verify/:token', async (req, res) => {
           <div class="step-inner">
             <h2 style="text-align:center;margin-bottom:4px">Referral Code</h2>
             <p style="text-align:center;margin-bottom:20px;font-size:13px">Enter the referral code from the person who invited you.</p>
-            <input type="text" name="referral" id="referralInput" placeholder="e.g. VMS-XXXXXX" maxlength="16" required style="text-align:center;font-size:16px">
+            <input type="text" name="referral" id="referralInput" class="referral-input" placeholder="e.g. VMS-XXXXXX" maxlength="16" required style="text-align:center;font-size:16px">
           </div>
           <div style="display:flex;gap:8px;margin-top:16px">
             <button type="button" class="btn btn-no" style="flex:0.4" onclick="prevStep()">← Back</button>
