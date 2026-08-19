@@ -350,7 +350,7 @@ async function saveApplication(userId, data) {
     howFound: data.howFound || null,
     discordCreatedAt: data.discordCreatedAt || null,
     hasAvatar: data.hasAvatar || false,
-    serverChecks: data.serverChecks || { ThirdLeg: false, Bnf: false },
+    serverChecks: data.serverChecks || { ThirdLeg: false, Bnf: false, Hermosa: false },
   };
   await users.updateOne({ userId }, { $set });
 }

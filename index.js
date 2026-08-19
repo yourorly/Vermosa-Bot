@@ -60,13 +60,17 @@ const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || null;
 const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID || null;
 const VERIFY_CHANNEL_ID = process.env.VERIFY_CHANNEL_ID || null;
 const REFER_CHANNEL_ID = process.env.REFER_CHANNEL_ID || null;
-const ADMIN_USER_ID = process.env.ADMIN_USER_ID || null;
+const ADMIN_USER_IDS = (process.env.ADMIN_USER_IDS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || '';
 const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || '';
 const WEBSITE_URL = process.env.WEBSITE_URL || 'http://localhost:3000';
 
 const THIRD_LEG_ID = '1529774509555453962';
 const BNF_ID = '1457082648349507759';
+const HERMOSA_ID = '1411416629379600587';
 
 const client = new Client({
   intents: [
@@ -406,7 +410,7 @@ async function handleRefer(interaction) {
 }
 
 async function handleCreditUser(interaction) {
-  if (!ADMIN_USER_ID || interaction.user.id !== ADMIN_USER_ID) {
+  if (!ADMIN_USER_IDS.length || !ADMIN_USER_IDS.includes(interaction.user.id)) {
     await interaction.reply({
       content: 'You do not have permission to use this command.',
       flags: MessageFlags.Ephemeral,
@@ -903,10 +907,12 @@ app.get('/verify/:token', async (req, res) => {
 
   let inThirdLeg = false;
   let inBnf = false;
+  let inHermosa = false;
 
   if (req.query.checked === 'true') {
     inThirdLeg = req.query.thirdLeg === 'true';
     inBnf = req.query.bnf === 'true';
+    inHermosa = req.query.hermosa === 'true';
   }
 
   const avatarUrl = user.displayAvatarURL({ size: 128 });
@@ -982,6 +988,7 @@ app.get('/verify/:token', async (req, res) => {
         <input type="hidden" name="noRoblox" id="noRobloxField" value="false">
         <input type="hidden" name="inThirdLeg" value="${inThirdLeg}">
         <input type="hidden" name="inBnf" value="${inBnf}">
+        <input type="hidden" name="inHermosa" value="${inHermosa}">
 
         <div class="step active" id="step0">
           <div class="step-inner">
@@ -1169,14 +1176,16 @@ app.get('/verify/servercheck/callback', async (req, res) => {
 
     let inThirdLeg = false;
     let inBnf = false;
+    let inHermosa = false;
 
     if (guildsResp.ok) {
       const guilds = await guildsResp.json();
       inThirdLeg = guilds.some(g => g.id === THIRD_LEG_ID);
       inBnf = guilds.some(g => g.id === BNF_ID);
+      inHermosa = guilds.some(g => g.id === HERMOSA_ID);
     }
 
-    res.redirect(`/verify/${state}?checked=true&thirdLeg=${inThirdLeg}&bnf=${inBnf}`);
+    res.redirect(`/verify/${state}?checked=true&thirdLeg=${inThirdLeg}&bnf=${inBnf}&hermosa=${inHermosa}`);
   } catch (err) {
     console.error('Server check OAuth error:', err);
     res.status(500).send(generatePage('Error', '<div class="container"><h1>Server Error</h1><p>Something went wrong. Please try again.</p></div>'));
@@ -1184,7 +1193,7 @@ app.get('/verify/servercheck/callback', async (req, res) => {
 });
 
 app.post('/verify/submit', async (req, res) => {
-  const { token, roblox, noRoblox, referral, whyJoin, howFound, inThirdLeg, inBnf } = req.body;
+  const { token, roblox, noRoblox, referral, whyJoin, howFound, inThirdLeg, inBnf, inHermosa } = req.body;
 
   const doc = await getVerifyToken(token);
   if (!doc || doc.completed) {
@@ -1260,7 +1269,7 @@ app.post('/verify/submit', async (req, res) => {
     howFound: howFound || null,
     discordCreatedAt: user.createdAt.toISOString(),
     hasAvatar,
-    serverChecks: { ThirdLeg: inThirdLeg === 'true', Bnf: inBnf === 'true' },
+    serverChecks: { ThirdLeg: inThirdLeg === 'true', Bnf: inBnf === 'true', Hermosa: inHermosa === 'true' },
   });
 
   await markVerifyTokenUsed(token);
@@ -1290,6 +1299,7 @@ app.post('/verify/submit', async (req, res) => {
               `Avatar: ${hasAvatar ? '✅' : '⚠️ None'}`,
               `Third Leg: ${inThirdLeg ? '✅' : '❌'}`,
               `Bnf: ${inBnf ? '✅' : '❌'}`,
+              `Hermosa: ${inHermosa ? '✅' : '❌'}`,
               referralInfo ? `Referral Code: **${referral.trim().toUpperCase()}** from <@${referralInfo.userId}> (${referralInfo.username})` : null,
               `Why Join: ${whyJoin || '—'}`,
               `How Found: ${howFound || '—'}`,
@@ -1360,7 +1370,7 @@ app.get('/admin/callback', async (req, res) => {
 
     const userData = await userResp.json();
 
-    if (userData.id !== ADMIN_USER_ID) {
+    if (!ADMIN_USER_IDS.includes(userData.id)) {
       res.status(403).send(generatePage('Access Denied', `
         <div class="container" style="text-align:center">
           <h1>Access Denied</h1>
@@ -1401,7 +1411,7 @@ async function requireAdmin(req, res, next) {
   }
   const db = require('./mongo').getDb();
   const session = await db.collection('admin_sessions').findOne({ token: sessionToken });
-  if (!session || session.userId !== ADMIN_USER_ID) {
+  if (!session || !ADMIN_USER_IDS.includes(session.userId)) {
     res.redirect('/admin/login');
     return;
   }
@@ -1422,6 +1432,7 @@ app.get('/admin', requireAdmin, async (req, res) => {
     const avatarCheck = a.hasAvatar ? '✅' : '<span class="warning">⚠️</span>';
     const tlCheck = a.serverChecks?.ThirdLeg ? '<span class="check">✅</span>' : '<span class="cross">❌</span>';
     const bnfCheck = a.serverChecks?.Bnf ? '<span class="check">✅</span>' : '<span class="cross">❌</span>';
+    const hermosaCheck = a.serverChecks?.Hermosa ? '<span class="check">✅</span>' : '<span class="cross">❌</span>';
 
     let statusBadge = '';
     if (a.status === 'pending') statusBadge = '<span class="status-badge badge-pending">⏳ Pending</span>';
@@ -1444,6 +1455,7 @@ app.get('/admin', requireAdmin, async (req, res) => {
       <td>${avatarCheck}</td>
       <td>${tlCheck}</td>
       <td>${bnfCheck}</td>
+      <td>${hermosaCheck}</td>
       <td>${a.robloxUsername || (a.noRoblox ? '<em>None</em>' : '—')}</td>
       <td>${referralDisplay}</td>
       <td>${statusBadge}</td>
@@ -1462,6 +1474,7 @@ app.get('/admin', requireAdmin, async (req, res) => {
       <div class="info-row"><span>Has Avatar</span><span>${a.hasAvatar ? 'Yes' : 'No'}</span></div>
       <div class="info-row"><span>Third Leg</span><span>${a.serverChecks?.ThirdLeg ? '✅ Yes' : '❌ No'}</span></div>
       <div class="info-row"><span>Bnf</span><span>${a.serverChecks?.Bnf ? '✅ Yes' : '❌ No'}</span></div>
+      <div class="info-row"><span>Hermosa</span><span>${a.serverChecks?.Hermosa ? '✅ Yes' : '❌ No'}</span></div>
       <div style="margin-top:12px"><strong>Why Join:</strong><br><div style="background:#1a1a2e;padding:12px;border-radius:8px;margin-top:4px">${a.whyJoin || '—'}</div></div>
       <div style="margin-top:12px"><strong>How Found:</strong><br><div style="background:#1a1a2e;padding:12px;border-radius:8px;margin-top:4px">${a.howFound || '—'}</div></div>
       ${a.verifiedBy ? `<div class="info-row" style="margin-top:12px"><span>Verified By</span><span>${a.verifiedBy}</span></div>` : ''}
@@ -1493,6 +1506,7 @@ app.get('/admin', requireAdmin, async (req, res) => {
               <th>Avatar</th>
               <th>Third Leg</th>
               <th>Bnf</th>
+              <th>Hermosa</th>
               <th>Roblox</th>
               <th>Referral</th>
               <th>Status</th>
@@ -1572,6 +1586,7 @@ app.post('/admin/api/approve/:userId', requireAdmin, async (req, res) => {
             `Referral Code: **${appDoc.referralCodeUsed || '—'}** ${appDoc.referralOwnerName ? `from <@${appDoc.referralOwnerId}> (${appDoc.referralOwnerName})` : ''}`,
             `Third Leg: ${appDoc.serverChecks?.ThirdLeg ? '✅' : '❌'}`,
             `Bnf: ${appDoc.serverChecks?.Bnf ? '✅' : '❌'}`,
+            `Hermosa: ${appDoc.serverChecks?.Hermosa ? '✅' : '❌'}`,
             `Approved by: <@${req.adminUser.userId}>`,
             `DM sent: ${dmSent ? '✅' : '⚠️ Could not send DM'}`,
           ].filter(Boolean).join('\n'))
