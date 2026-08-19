@@ -127,18 +127,12 @@ async function handleMemberJoin(member) {
   const used = await findUsedInvite(guild, oldCache);
   let inviterId = used ? used.inviterId : null;
 
-  let inviterName = null;
-  let refCode = null;
   let viaReferLink = null;
 
   if (inviterId) {
     const inviterUser = await client.users.fetch(inviterId).catch(() => null);
     if (inviterUser && inviterUser.bot) {
       inviterId = null;
-    } else {
-      inviterName = inviterUser ? inviterUser.username : String(inviterId);
-      const inviterDoc = await getUser(inviterId);
-      refCode = inviterDoc ? inviterDoc.referralCode : null;
     }
   }
   if (used) {
@@ -147,33 +141,22 @@ async function handleMemberJoin(member) {
       if (!viaReferLink.used) {
         await markReferLinkUsed(used.code, member.id);
       }
-      if (viaReferLink.ownerId) {
-        inviterId = viaReferLink.ownerId;
-        const realInviter = await client.users.fetch(inviterId).catch(() => null);
-        inviterName = realInviter ? realInviter.username : String(inviterId);
-        const realInviterDoc = await getUser(inviterId);
-        refCode = realInviterDoc ? realInviterDoc.referralCode : null;
-      }
     }
   }
 
   await ensureUser({
     userId: member.id,
     username: member.user.username,
-    inviterId,
-    inviterName,
   });
 
   await refreshInvites(guild);
 
   const logChannel = await getLogChannel(guild);
   if (logChannel && logChannel.isSendable()) {
-    const refText = inviterId ? `<@${inviterId}> (${inviterName})` : 'No invite detected';
     const desc = [
       `**${member.user.tag}** (<@${member.id}>) joined the server.`,
-      `Referred by: ${refText}`,
-      refCode ? `Referral ID: **${refCode}**` : null,
-      viaReferLink ? `Used referral link: **${viaReferLink.code}**` : null,
+      viaReferLink ? `Joined via referral link: **${viaReferLink.code}**` : null,
+      `No credit given — must be approved in dashboard.`,
     ].filter(Boolean).join('\n');
     logChannel.send({
       embeds: [
@@ -184,10 +167,6 @@ async function handleMemberJoin(member) {
           .setTimestamp(),
       ],
     }).catch(() => {});
-  }
-
-  if (UNVERIFIED_ROLE_ID) {
-    await member.roles.add(UNVERIFIED_ROLE_ID).catch(() => {});
   }
 }
 
