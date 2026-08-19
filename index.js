@@ -17,6 +17,9 @@ const {
   PermissionFlagsBits,
   MessageFlags,
   ChannelType,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
 } = require('discord.js');
 
 const {
@@ -563,6 +566,120 @@ async function handleReport(interaction) {
   });
 }
 
+async function handleAppeal(interaction) {
+  const modal = new ModalBuilder()
+    .setCustomId('appeal_modal')
+    .setTitle('Appeal Form')
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('appeal_username')
+          .setLabel('Your Username')
+          .setPlaceholder('Enter your username')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true),
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('appeal_userid')
+          .setLabel('Your User ID')
+          .setPlaceholder('Enter your Discord user ID')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true),
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('appeal_explanation')
+          .setLabel('Explanation')
+          .setPlaceholder('Briefly explain why you are appealing')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true),
+      ),
+    );
+
+  await interaction.showModal(modal);
+}
+
+async function handleAppealModal(interaction) {
+  const APPEAL_CHANNEL_ID = '1539707387735441579';
+  const APPEAL_ROLE_ID = '1537907967339266194';
+
+  const username = interaction.fields.getTextInputValue('appeal_username');
+  const userId = interaction.fields.getTextInputValue('appeal_userid');
+  const explanation = interaction.fields.getTextInputValue('appeal_explanation');
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const channel = interaction.guild.channels.cache.get(APPEAL_CHANNEL_ID) ||
+    (await interaction.guild.channels.fetch(APPEAL_CHANNEL_ID).catch(() => null));
+
+  if (!channel) {
+    await interaction.editReply({ content: 'Appeal channel not found. Contact an admin.' });
+    return;
+  }
+
+  let thread;
+  try {
+    thread = await channel.threads.create({
+      name: `appeal-${username}`,
+      type: ChannelType.PrivateThread,
+      reason: `Appeal by ${interaction.user.tag}`,
+    });
+  } catch (err) {
+    console.error('Failed to create appeal thread:', err);
+    await interaction.editReply({ content: 'Failed to create appeal thread. Make sure I have Manage Threads permission.' });
+    return;
+  }
+
+  await thread.members.add(interaction.user.id).catch(() => {});
+
+  const embed = new EmbedBuilder()
+    .setTitle('Appeal Submitted')
+    .setColor(0xf1c40f)
+    .addFields(
+      { name: 'Username', value: username, inline: true },
+      { name: 'User ID', value: userId, inline: true },
+      { name: 'Submitted By', value: `${interaction.user.tag} (<@${interaction.user.id}>)`, inline: true },
+      { name: 'Explanation', value: explanation },
+    )
+    .setTimestamp()
+    .setFooter({ text: `Appeal from ${interaction.guild.name}` });
+
+  await thread.send({ content: `<@&${APPEAL_ROLE_ID}>`, embeds: [embed] });
+
+  await interaction.editReply({
+    content: `✅ Your appeal has been submitted. A staff member will review it in <#${thread.id}>.`,
+  });
+}
+
+async function handleSetupAppeal(interaction) {
+  const channel = interaction.options.getChannel('channel');
+
+  const embed = new EmbedBuilder()
+    .setTitle('Notice')
+    .setColor(0xe74c3c)
+    .setDescription(
+      '**You are seeing this channel because you have been banned or blacklisted from this server.**\n\n' +
+      '**What this means:**\n' +
+      '• Your access to the rest of the server has been revoked.\n' +
+      '• You can no longer view or interact with public channels, voice rooms, or general chat.\n\n' +
+      '**How to appeal:**\n' +
+      'Reach out directly to a server **Admin** or **Moderator** via Direct Message (DM).\n' +
+      'Or press the appeal button below to open the appeal form.\n\n' +
+      '*Please remain patient while the moderation team reviews your request.*'
+    );
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('appeal_button')
+      .setLabel('Appeal')
+      .setStyle(ButtonStyle.Danger),
+  );
+
+  await channel.send({ embeds: [embed], components: [row] });
+  await interaction.reply({ content: `✅ Appeal message posted in <#${channel.id}>.`, flags: MessageFlags.Ephemeral });
+}
+
 const SERVERCHECK_GUILD_ID = '1529774509555453962';
 
 async function handleServerCheck(interaction) {
@@ -722,6 +839,14 @@ client.once(Events.ClientReady, async () => {
           ))
       .addStringOption((o) => o.setName('description').setDescription('Describe the issue').setRequired(true))
       .addAttachmentOption((o) => o.setName('image').setDescription('Optional screenshot or evidence')),
+    new SlashCommandBuilder()
+      .setName('appeal')
+      .setDescription('Open the appeal modal'),
+    new SlashCommandBuilder()
+      .setName('setupappeal')
+      .setDescription('Post the ban/blacklist notice with appeal button')
+      .addChannelOption((o) => o.setName('channel').setDescription('Channel to post in').setRequired(true))
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   ];
 
   if (GUILD_ID) {
@@ -763,10 +888,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction.commandName === 'credituser') return handleCreditUser(interaction);
       if (interaction.commandName === 'servercheck') return handleServerCheck(interaction);
       if (interaction.commandName === 'report') return handleReport(interaction);
+      if (interaction.commandName === 'appeal') return handleAppeal(interaction);
+      if (interaction.commandName === 'setupappeal') return handleSetupAppeal(interaction);
     }
 
     if (interaction.isButton() && interaction.customId === 'verify_open') {
       return handleVerifyButton(interaction);
+    }
+    if (interaction.isButton() && interaction.customId === 'appeal_button') {
+      return handleAppeal(interaction);
+    }
+    if (interaction.isModalSubmit() && interaction.customId === 'appeal_modal') {
+      return handleAppealModal(interaction);
     }
   } catch (err) {
     console.error('Interaction error:', err);
