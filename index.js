@@ -981,6 +981,7 @@ app.get('/verify/:token', async (req, res) => {
           <div class="prog-dot" id="dot1"></div>
           <div class="prog-dot" id="dot2"></div>
           <div class="prog-dot" id="dot3"></div>
+          <div class="prog-dot" id="dot4"></div>
         </div>
       </div>
 
@@ -1008,6 +1009,18 @@ app.get('/verify/:token', async (req, res) => {
 
         <div class="step" id="step1">
           <div class="step-inner">
+            <h2 style="text-align:center;margin-bottom:4px">What is your Age?</h2>
+            <p style="text-align:center;margin-bottom:20px;font-size:13px">Enter your age below.</p>
+            <input type="number" name="age" id="ageInput" placeholder="Enter your age" min="1" max="120" required style="text-align:center;font-size:16px">
+          </div>
+          <div style="display:flex;gap:8px;margin-top:16px">
+            <button type="button" class="btn btn-no" style="flex:0.4" onclick="prevStep()">← Back</button>
+            <button type="button" class="btn btn-primary" style="flex:1" onclick="nextStep()">Next →</button>
+          </div>
+        </div>
+
+        <div class="step" id="step2">
+          <div class="step-inner">
             <h2 style="text-align:center;margin-bottom:4px">Why do you want to join?</h2>
             <p style="text-align:center;margin-bottom:20px;font-size:13px">Tell us why you'd like to be part of this community.</p>
             <textarea name="whyJoin" id="whyJoinInput" placeholder="Type your answer here..." required maxlength="500" style="min-height:120px;text-align:center"></textarea>
@@ -1018,7 +1031,7 @@ app.get('/verify/:token', async (req, res) => {
           </div>
         </div>
 
-        <div class="step" id="step2">
+        <div class="step" id="step3">
           <div class="step-inner">
             <h2 style="text-align:center;margin-bottom:4px">How did you find us?</h2>
             <p style="text-align:center;margin-bottom:20px;font-size:13px">How did you discover this server?</p>
@@ -1030,7 +1043,7 @@ app.get('/verify/:token', async (req, res) => {
           </div>
         </div>
 
-        <div class="step" id="step3">
+        <div class="step" id="step4">
           <div class="step-inner">
             <h2 style="text-align:center;margin-bottom:4px">Referral Code</h2>
             <p style="text-align:center;margin-bottom:20px;font-size:13px">Enter the referral code from the person who invited you.</p>
@@ -1056,7 +1069,7 @@ app.get('/verify/:token', async (req, res) => {
 
     <script>
       var current = 0;
-      var total = 4;
+      var total = 5;
       var noRoblox = false;
 
       document.getElementById('noRobloxBtn').addEventListener('click', function() {
@@ -1194,7 +1207,7 @@ app.get('/verify/servercheck/callback', async (req, res) => {
 });
 
 app.post('/verify/submit', async (req, res) => {
-  const { token, roblox, noRoblox, referral, whyJoin, howFound, inThirdLeg, inBnf, inHermosa } = req.body;
+  const { token, roblox, noRoblox, age, referral, whyJoin, howFound, inThirdLeg, inBnf, inHermosa } = req.body;
 
   const doc = await getVerifyToken(token);
   if (!doc || doc.completed) {
@@ -1263,6 +1276,7 @@ app.post('/verify/submit', async (req, res) => {
   await saveApplication(doc.userId, {
     robloxUsername: robloxValid ? robloxData.name : (noRoblox === 'true' ? null : (roblox ? roblox.trim() : null)),
     noRoblox: noRoblox === 'true',
+    age: age ? parseInt(age, 10) : null,
     referralCodeUsed: referral && referral.trim() ? referral.trim().toUpperCase() : null,
     referralOwnerId: referralInfo ? referralInfo.userId : null,
     referralOwnerName: referralInfo ? referralInfo.username : null,
@@ -1289,6 +1303,7 @@ app.post('/verify/submit', async (req, res) => {
             color: 0xf39c12,
             description: [
               `**Applicant:** ${user.tag} (<@${user.id}>)`,
+              `**Age:** ${age || '—'}`,
               `**Time:** <t:${Math.floor(Date.now() / 1000)}:F>`,
               referralInfo ? `**Referral Code:** ${referral.trim().toUpperCase()}` : null,
               referralInfo ? `**Referral Owner:** <@${referralInfo.userId}> (${referralInfo.username})` : null,
@@ -1322,6 +1337,7 @@ app.post('/verify/submit', async (req, res) => {
             .setDescription([
               `**${user.tag}** (<@${user.id}>) submitted an application.`,
               `Roblox: **${robloxMsg}**`,
+              `Age: **${age || '—'}**`,
               `Account Age: **${accountAge} days** ${accountAge < 7 ? '⚠️' : ''}`,
               `Avatar: ${hasAvatar ? '✅' : '⚠️ None'}`,
               `Third Leg: ${inThirdLeg ? '✅' : '❌'}`,
@@ -1479,6 +1495,7 @@ app.get('/admin', requireAdmin, async (req, res) => {
     return `<tr class="app-row" onclick="showDetail('${a.userId}')">
       <td><strong>${a.username || 'Unknown'}</strong><br><span style="color:#888;font-size:11px">${a.userId}</span></td>
       <td>${age}d ${ageWarn}</td>
+      <td>${a.age || '—'}</td>
       <td>${avatarCheck}</td>
       <td>${tlCheck}</td>
       <td>${bnfCheck}</td>
@@ -1494,6 +1511,7 @@ app.get('/admin', requireAdmin, async (req, res) => {
     return `<div id="detail-${a.userId}" style="display:none" class="detail-panel">
       <h3 style="margin-bottom:12px">${a.username || 'Unknown'} — Application Details</h3>
       <div class="info-row"><span>Discord ID</span><span>${a.userId}</span></div>
+      <div class="info-row"><span>Age</span><span>${a.age || '—'}</span></div>
       <div class="info-row"><span>Roblox</span><span>${a.robloxUsername || (a.noRoblox ? 'No account' : '—')}</span></div>
       <div class="info-row"><span>Referral Code Used</span><span>${a.referralCodeUsed || '—'}</span></div>
       <div class="info-row"><span>Referral Owner</span><span>${a.referralOwnerName ? `${a.referralOwnerName} (${a.referralOwnerId})` : '—'}</span></div>
@@ -1529,7 +1547,8 @@ app.get('/admin', requireAdmin, async (req, res) => {
           <thead>
             <tr>
               <th>Discord</th>
-              <th>Age</th>
+              <th>Discord Age</th>
+              <th>User Age</th>
               <th>Avatar</th>
               <th>Third Leg</th>
               <th>Bnf</th>
@@ -1609,6 +1628,7 @@ app.post('/admin/api/approve/:userId', requireAdmin, async (req, res) => {
           .setColor(0x2ecc71)
           .setDescription([
             `**${appDoc.username || 'Unknown'}** (<@${userId}>) approved.`,
+            `Age: **${appDoc.age || '—'}**`,
             `Roblox: **${appDoc.robloxUsername || (appDoc.noRoblox ? 'No account' : '—')}**`,
             `Referral Code: **${appDoc.referralCodeUsed || '—'}** ${appDoc.referralOwnerName ? `from <@${appDoc.referralOwnerId}> (${appDoc.referralOwnerName})` : ''}`,
             `Third Leg: ${appDoc.serverChecks?.ThirdLeg ? '✅' : '❌'}`,

@@ -343,6 +343,7 @@ async function saveApplication(userId, data) {
     status: 'pending',
     robloxUsername: data.robloxUsername || null,
     noRoblox: data.noRoblox || false,
+    age: data.age || null,
     referralCodeUsed: data.referralCodeUsed || null,
     referralOwnerId: data.referralOwnerId || null,
     referralOwnerName: data.referralOwnerName || null,
