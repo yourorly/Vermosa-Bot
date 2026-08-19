@@ -67,6 +67,7 @@ const ADMIN_USER_IDS = (process.env.ADMIN_USER_IDS || '')
 const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || '';
 const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || '';
 const WEBSITE_URL = process.env.WEBSITE_URL || 'http://localhost:3000';
+const APPLICATION_WEBHOOK_URL = process.env.APPLICATION_WEBHOOK_URL || null;
 
 const THIRD_LEG_ID = '1529774509555453962';
 const BNF_ID = '1457082648349507759';
@@ -1273,6 +1274,32 @@ app.post('/verify/submit', async (req, res) => {
   });
 
   await markVerifyTokenUsed(token);
+
+  const adminMentions = ADMIN_USER_IDS.map(id => `<@${id}>`).join(' ');
+
+  if (APPLICATION_WEBHOOK_URL) {
+    fetch(APPLICATION_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: adminMentions,
+        embeds: [
+          {
+            title: '📋 New Application Submitted',
+            color: 0xf39c12,
+            description: [
+              `**Applicant:** ${user.tag} (<@${user.id}>)`,
+              `**Time:** <t:${Math.floor(Date.now() / 1000)}:F>`,
+              referralInfo ? `**Referral Code:** ${referral.trim().toUpperCase()}` : null,
+              referralInfo ? `**Referral Owner:** <@${referralInfo.userId}> (${referralInfo.username})` : null,
+              `\n[View in Dashboard](${WEBSITE_URL}/admin)`,
+            ].filter(Boolean).join('\n'),
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      }),
+    }).catch(() => {});
+  }
 
   let robloxMsg = 'None';
   if (noRoblox === 'true') {
