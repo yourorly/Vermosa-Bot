@@ -81,10 +81,16 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildInvites,
+    GatewayIntentBits.GuildVoiceStates,
   ],
 });
 
 const inviteCache = new Map();
+
+const TRIGGER_VC_ID = '1540049107970687097';
+const TEMP_VC_CATEGORY_ID = '1540048725580321019';
+const tempVCs = new Map();
+let roomCounter = 1;
 
 async function refreshInvites(guild) {
   let invites;
@@ -876,6 +882,95 @@ client.on(Events.GuildInviteDelete, async (invite) => {
 client.on(Events.GuildMemberAdd, handleMemberJoin);
 client.on(Events.GuildMemberRemove, handleMemberRemove);
 
+client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
+  try {
+    const guild = newState.guild || oldState.guild;
+    if (!guild) return;
+
+    const member = newState.member || oldState.member;
+    if (!member) return;
+
+    if (newState.channelId === TRIGGER_VC_ID && oldState.channelId !== TRIGGER_VC_ID) {
+      const channelName = `ʍƈ ʋƈ ${roomCounter}`;
+      roomCounter++;
+
+      const vc = await guild.channels.create({
+        name: channelName,
+        type: ChannelType.GuildVoice,
+        parent: TEMP_VC_CATEGORY_ID,
+        permissionOverwrites: [
+          {
+            id: guild.id,
+            allow: [
+              PermissionFlagsBits.Connect,
+              PermissionFlagsBits.Speak,
+            ],
+          },
+        ],
+      });
+
+      tempVCs.set(vc.id, {
+        creatorId: member.id,
+        locked: false,
+        guildId: guild.id,
+      });
+
+      await member.voice.setChannel(vc.id).catch(() => {});
+
+      const controlEmbed = new EmbedBuilder()
+        .setColor(0x2f3136)
+        .setTitle('Voice Room Controls')
+        .setDescription(`Room: **${channelName}**\nUse the buttons below to manage your room.`);
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('vc_lock')
+          .setLabel('Lock')
+          .setEmoji('🔒')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('vc_unlock')
+          .setLabel('Unlock')
+          .setEmoji('🔓')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('vc_rename')
+          .setLabel('Rename')
+          .setEmoji('✏️')
+          .setStyle(ButtonStyle.Secondary),
+      );
+
+      await vc.send({
+        embeds: [controlEmbed],
+        components: [row],
+      }).catch(() => {});
+      return;
+    }
+
+    if (oldState.channelId && tempVCs.has(oldState.channelId)) {
+      const vcData = tempVCs.get(oldState.channelId);
+      const vcChannel = guild.channels.cache.get(oldState.channelId);
+      if (!vcChannel) {
+        tempVCs.delete(oldState.channelId);
+        return;
+      }
+
+      const membersInChannel = vcChannel.members.filter(m => !m.user.bot);
+      if (membersInChannel.size === 0) {
+        setTimeout(async () => {
+          const ch = guild.channels.cache.get(oldState.channelId);
+          if (ch && ch.members.filter(m => !m.user.bot).size === 0) {
+            tempVCs.delete(oldState.channelId);
+            await ch.delete().catch(() => {});
+          }
+        }, 5000);
+      }
+    }
+  } catch (err) {
+    console.error('VoiceStateUpdate error:', err);
+  }
+});
+
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.isChatInputCommand()) {
@@ -900,6 +995,68 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     if (interaction.isModalSubmit() && interaction.customId === 'appeal_modal') {
       return handleAppealModal(interaction);
+    }
+
+    if (interaction.isButton() && (interaction.customId === 'vc_lock' || interaction.customId === 'vc_unlock' || interaction.customId === 'vc_rename')) {
+      const member = interaction.member;
+      const voiceChannel = member?.voice?.channel;
+      if (!voiceChannel || !tempVCs.has(voiceChannel.id)) {
+        return interaction.reply({ content: 'You must be in a temporary voice room to use this.', flags: MessageFlags.Ephemeral }).catch(() => {});
+      }
+      const vcData = tempVCs.get(voiceChannel.id);
+      if (vcData.creatorId !== member.id) {
+        return interaction.reply({ content: 'Only the room creator can use these controls.', flags: MessageFlags.Ephemeral }).catch(() => {});
+      }
+
+      if (interaction.customId === 'vc_lock') {
+        await voiceChannel.setUserLimit(1).catch(() => {});
+        vcData.locked = true;
+        return interaction.reply({ content: 'Room locked. Only you can join now.', flags: MessageFlags.Ephemeral }).catch(() => {});
+      }
+
+      if (interaction.customId === 'vc_unlock') {
+        await voiceChannel.setUserLimit(0).catch(() => {});
+        vcData.locked = false;
+        return interaction.reply({ content: 'Room unlocked. Anyone can join now.', flags: MessageFlags.Ephemeral }).catch(() => {});
+      }
+
+      if (interaction.customId === 'vc_rename') {
+        const modal = new ModalBuilder()
+          .setCustomId('rename_modal')
+          .setTitle('Rename Voice Room')
+          .addComponents(
+            new ActionRowBuilder().addComponents(
+              new TextInputBuilder()
+                .setCustomId('new_name')
+                .setLabel('New room name')
+                .setStyle(TextInputStyle.Short)
+                .setPlaceholder(`Current: ${voiceChannel.name}`)
+                .setMaxLength(100)
+                .setRequired(true),
+            ),
+          );
+        return interaction.showModal(modal).catch(() => {});
+      }
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId === 'rename_modal') {
+      const member = interaction.member;
+      const voiceChannel = member?.voice?.channel;
+      if (!voiceChannel || !tempVCs.has(voiceChannel.id)) {
+        return interaction.reply({ content: 'You must be in a temporary voice room to rename it.', flags: MessageFlags.Ephemeral }).catch(() => {});
+      }
+      const vcData = tempVCs.get(voiceChannel.id);
+      if (vcData.creatorId !== member.id) {
+        return interaction.reply({ content: 'Only the room creator can rename it.', flags: MessageFlags.Ephemeral }).catch(() => {});
+      }
+
+      const newName = interaction.fields.getTextInputValue('new_name').trim();
+      if (!newName) {
+        return interaction.reply({ content: 'Please provide a valid name.', flags: MessageFlags.Ephemeral }).catch(() => {});
+      }
+
+      await voiceChannel.setName(newName).catch(() => {});
+      return interaction.reply({ content: `Room renamed to **${newName}**.`, flags: MessageFlags.Ephemeral }).catch(() => {});
     }
   } catch (err) {
     console.error('Interaction error:', err);
