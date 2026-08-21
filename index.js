@@ -90,7 +90,16 @@ const inviteCache = new Map();
 const TRIGGER_VC_ID = '1540049107970687097';
 const TEMP_VC_CATEGORY_ID = '1540048725580321019';
 const tempVCs = new Map();
-let roomCounter = 1;
+
+function getNextRoomNumber() {
+  const usedNumbers = new Set();
+  for (const [, data] of tempVCs) {
+    usedNumbers.add(data.roomNumber);
+  }
+  let num = 1;
+  while (usedNumbers.has(num)) num++;
+  return num;
+}
 
 async function refreshInvites(guild) {
   let invites;
@@ -891,8 +900,7 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
     if (!member) return;
 
     if (newState.channelId === TRIGGER_VC_ID && oldState.channelId !== TRIGGER_VC_ID) {
-      const channelName = `ʍƈ ʋƈ ${roomCounter}`;
-      roomCounter++;
+      const channelName = `ʍƈ ʋƈ ${getNextRoomNumber()}`;
 
       const vc = await guild.channels.create({
         name: channelName,
@@ -906,6 +914,14 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
               PermissionFlagsBits.Speak,
             ],
           },
+          {
+            id: member.id,
+            allow: [
+              PermissionFlagsBits.Connect,
+              PermissionFlagsBits.Speak,
+              PermissionFlagsBits.MoveMembers,
+            ],
+          },
         ],
       });
 
@@ -913,6 +929,7 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
         creatorId: member.id,
         locked: false,
         guildId: guild.id,
+        roomNumber: parseInt(channelName.replace('ʍƈ ʋƈ ', '')),
       });
 
       await member.voice.setChannel(vc.id).catch(() => {});
@@ -1009,13 +1026,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (interaction.customId === 'vc_lock') {
-        await voiceChannel.setUserLimit(1).catch(() => {});
+        await voiceChannel.permissionOverwrites.edit(interaction.guild.roles.everyone, {
+          Connect: false,
+        }).catch(() => {});
+        await voiceChannel.permissionOverwrites.edit(member, {
+          Connect: true,
+        }).catch(() => {});
         vcData.locked = true;
         return interaction.reply({ content: 'Room locked. Only you can join now.', flags: MessageFlags.Ephemeral }).catch(() => {});
       }
 
       if (interaction.customId === 'vc_unlock') {
-        await voiceChannel.setUserLimit(0).catch(() => {});
+        await voiceChannel.permissionOverwrites.edit(interaction.guild.roles.everyone, {
+          Connect: true,
+        }).catch(() => {});
         vcData.locked = false;
         return interaction.reply({ content: 'Room unlocked. Anyone can join now.', flags: MessageFlags.Ephemeral }).catch(() => {});
       }
