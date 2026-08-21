@@ -85,7 +85,11 @@ async function useRefCode(code, usedBy) {
   if (!doc) return { ok: false, reason: 'not_found' };
   if (doc.ownerId === usedBy) return { ok: false, reason: 'self' };
 
-  const alreadyUsed = await db.collection('users').findOne({ userId: usedBy, inviterId: { $ne: null } });
+  const alreadyUsed = await db.collection('users').findOne({
+    userId: usedBy,
+    inviterId: { $ne: null },
+    status: { $in: ['pending', 'approved'] },
+  });
   if (alreadyUsed) return { ok: false, reason: 'already_recruited' };
 
   await codes.updateOne({ _id: doc._id }, { $set: { used: true, usedBy } });
@@ -374,7 +378,16 @@ async function approveApplication(userId, adminId) {
 async function rejectApplication(userId, adminId) {
   return db.collection('users').updateOne(
     { userId },
-    { $set: { status: 'rejected', flagged: true, verifiedBy: `rejected:${adminId}` } }
+    {
+      $set: { status: 'rejected', flagged: true, verifiedBy: `rejected:${adminId}` },
+      $unset: {
+        inviterId: '',
+        inviterName: '',
+        referralCodeUsed: '',
+        referralOwnerId: '',
+        referralOwnerName: '',
+      },
+    }
   );
 }
 

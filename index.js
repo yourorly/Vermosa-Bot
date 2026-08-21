@@ -144,6 +144,8 @@ async function findUsedInvite(guild, oldCache) {
 }
 
 async function handleMemberJoin(member) {
+  if (member.user.bot) return;
+
   const guild = member.guild;
   const oldCache = inviteCache.get(guild.id) || new Map();
 
@@ -1571,7 +1573,7 @@ app.post('/verify/submit', async (req, res) => {
     } else if (referralResult.reason === 'self') {
       reason = 'You cannot use your own referral code.';
     } else if (referralResult.reason === 'already_recruited') {
-      reason = 'You have already been credited by another referrer.';
+      reason = 'Your account is already credited to another referrer. Ask a staff member if you think this is a mistake.';
     } else {
       reason = 'Invalid referral code.';
     }
