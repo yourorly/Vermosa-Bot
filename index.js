@@ -2008,7 +2008,13 @@ function startServer() {
 async function main() {
   startServer();
   await connect();
-  client.login(TOKEN);
+  try {
+    await client.login(TOKEN);
+    console.log('Discord client login succeeded');
+  } catch (err) {
+    console.error('Discord login failed:', err.name, '|', err.message);
+    console.error('The website will keep running, but the bot will stay offline until TOKEN is fixed.');
+  }
 }
 
 main().catch((err) => {

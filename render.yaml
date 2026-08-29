@@ -24,7 +24,7 @@ services:
         sync: false
       - key: REFER_CHANNEL_ID
         sync: false
-      - key: ADMIN_USER_ID
+      - key: ADMIN_USER_IDS
         sync: false
       - key: DISCORD_CLIENT_ID
         sync: false
