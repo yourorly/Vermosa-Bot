@@ -2014,6 +2014,23 @@ function startServer() {
 async function main() {
   startServer();
   await connect();
+
+  client.rest.on('debug', (m) => console.log('[rest]', m));
+
+  try {
+    const probeResp = await fetch('https://discord.com/api/v10/gateway/bot', {
+      headers: {
+        authorization: `Bot ${TOKEN}`,
+        'user-agent': 'DiscordBot (https://github.com/yourorly/Vermosa-Bot, 1.0.0)',
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+    const body = (await probeResp.text()).slice(0, 300);
+    console.log(`[probe] GET /gateway/bot -> ${probeResp.status} ${body}`);
+  } catch (err) {
+    console.error(`[probe] GET /gateway/bot ERROR -> ${err.name} ${err.message} ${err.code ?? ''}`);
+  }
+
   const loginTimeout = setTimeout(() => {
     console.error('Login watchdog: client.login did not complete within 45s.');
     console.error('Client websocket status:', client.ws?.status, '| ws readyState:', client.ws?.shards?.first()?.ws?.readyState);
