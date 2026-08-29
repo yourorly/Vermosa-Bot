@@ -85,6 +85,12 @@ const client = new Client({
   ],
 });
 
+client.on('debug', (m) => console.log('[gateway]', m));
+client.on('warn', (m) => console.warn('[gateway warn]', m));
+client.on(Events.ShardError, (e) => console.error('[gateway] ShardError:', e.message));
+client.on(Events.ShardDisconnect, (e) => console.error('[gateway] ShardDisconnect:', e?.code ?? e, e?.reason ?? ''));
+client.on(Events.ShardReconnecting, () => console.error('[gateway] ShardReconnecting...'));
+
 const inviteCache = new Map();
 
 const TRIGGER_VC_ID = '1540049107970687097';
@@ -2008,12 +2014,19 @@ function startServer() {
 async function main() {
   startServer();
   await connect();
+  const loginTimeout = setTimeout(() => {
+    console.error('Login watchdog: client.login did not complete within 45s.');
+    console.error('Client websocket status:', client.ws?.status, '| ws readyState:', client.ws?.shards?.first()?.ws?.readyState);
+    process.exit(1);
+  }, 45000);
   try {
     await client.login(TOKEN);
     console.log('Discord client login succeeded');
   } catch (err) {
     console.error('Discord login failed:', err.name, '|', err.message);
     console.error('The website will keep running, but the bot will stay offline until TOKEN is fixed.');
+  } finally {
+    clearTimeout(loginTimeout);
   }
 }
 
