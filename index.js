@@ -2011,40 +2011,51 @@ function startServer() {
   });
 }
 
+async function connectDiscordWithRetry() {
+  const probeHeaders = {
+    authorization: `Bot ${TOKEN}`,
+    'user-agent': 'DiscordBot (https://github.com/yourorly/Vermosa-Bot, 1.0.0)',
+  };
+
+  while (true) {
+    let apiOk = false;
+    try {
+      const probeResp = await fetch('https://discord.com/api/v10/gateway/bot', {
+        headers: probeHeaders,
+        signal: AbortSignal.timeout(15000),
+      });
+      const body = (await probeResp.text()).slice(0, 100);
+      console.log(`[probe] GET /gateway/bot -> ${probeResp.status} ${body}`);
+      apiOk = probeResp.status === 200;
+    } catch (err) {
+      console.error(`[probe] GET /gateway/bot ERROR -> ${err.name} ${err.message} ${err.code ?? ''}`);
+    }
+
+    if (!apiOk) {
+      console.log('[precheck] Discord API is unreachable from this server IP (blocked/429). Skipping login. Retrying in 5 minutes...');
+      await new Promise((r) => setTimeout(r, 5 * 60 * 1000));
+      continue;
+    }
+
+    try {
+      await client.login(TOKEN);
+      console.log('Discord client login succeeded');
+      return;
+    } catch (err) {
+      console.error('Discord login failed:', err.name, '|', err.message);
+    }
+    console.log('Retrying login in 2 minutes...');
+    await new Promise((r) => setTimeout(r, 2 * 60 * 1000));
+  }
+}
+
 async function main() {
   startServer();
   await connect();
 
   client.rest.on('debug', (m) => console.log('[rest]', m));
 
-  try {
-    const probeResp = await fetch('https://discord.com/api/v10/gateway/bot', {
-      headers: {
-        authorization: `Bot ${TOKEN}`,
-        'user-agent': 'DiscordBot (https://github.com/yourorly/Vermosa-Bot, 1.0.0)',
-      },
-      signal: AbortSignal.timeout(15000),
-    });
-    const body = (await probeResp.text()).slice(0, 300);
-    console.log(`[probe] GET /gateway/bot -> ${probeResp.status} ${body}`);
-  } catch (err) {
-    console.error(`[probe] GET /gateway/bot ERROR -> ${err.name} ${err.message} ${err.code ?? ''}`);
-  }
-
-  const loginTimeout = setTimeout(() => {
-    console.error('Login watchdog: client.login did not complete within 45s.');
-    console.error('Client websocket status:', client.ws?.status, '| ws readyState:', client.ws?.shards?.first()?.ws?.readyState);
-    process.exit(1);
-  }, 45000);
-  try {
-    await client.login(TOKEN);
-    console.log('Discord client login succeeded');
-  } catch (err) {
-    console.error('Discord login failed:', err.name, '|', err.message);
-    console.error('The website will keep running, but the bot will stay offline until TOKEN is fixed.');
-  } finally {
-    clearTimeout(loginTimeout);
-  }
+  await connectDiscordWithRetry();
 }
 
 main().catch((err) => {
